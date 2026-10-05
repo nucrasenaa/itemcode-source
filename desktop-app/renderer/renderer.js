@@ -378,6 +378,7 @@ function inputValues() {
         telegramToken: document.getElementById('telegramToken').value,
         telegramChatId: document.getElementById('telegramChatId').value,
         telegramEnabled: document.getElementById('telegramEnabled').checked,
+        browserRedeemMaxAttempts: Number(document.getElementById('browserRedeemMaxAttempts').value),
         youtubeChatEnabled: elements.youtubeChatEnabled.checked,
         discordWebhookUrls: webhookUrls,
         discordEnabled: document.getElementById('discordEnabled').checked
@@ -385,6 +386,7 @@ function inputValues() {
 }
 
 function setInputs(values) {
+    document.getElementById('browserRedeemMaxAttempts').value = values?.browserRedeemMaxAttempts ?? 20;
     for (const key of ['username', 'password']) {
         document.getElementById(key).value = values?.[key] || '';
     }
@@ -691,6 +693,10 @@ async function toggleService() {
 }
 
 function credentialsReady(values = inputValues()) {
+    if (!Number.isInteger(values.browserRedeemMaxAttempts) || values.browserRedeemMaxAttempts < 1 || values.browserRedeemMaxAttempts > 100) {
+        showToast('กรุณาระบุจำนวนครั้งเป็นจำนวนเต็ม 1–100', true);
+        return null;
+    }
     const accounts = values.itemcodeAccounts || [];
     const completeAccounts = accounts.filter(account => account.username.trim() && account.password);
     const incompleteAccounts = accounts.filter(account =>
@@ -913,3 +919,17 @@ api.onRequirementsUpdate(next => {
         showToast(error.message || 'เปิดแอปไม่สำเร็จ', true);
     }
 })();
+
+document.getElementById('browserRedeemMaxAttempts').addEventListener('change', async event => {
+    const value = Number(event.target.value);
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+        showToast('กรุณาระบุจำนวนครั้งเป็นจำนวนเต็ม 1–100', true);
+        return;
+    }
+    try {
+        await api.saveRedeemAttempts(value);
+        showToast('บันทึกจำนวนครั้งแล้ว');
+    } catch (error) {
+        showToast(`บันทึกจำนวนครั้งไม่สำเร็จ: ${error.message}`, true);
+    }
+});

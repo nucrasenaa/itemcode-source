@@ -15,6 +15,7 @@ const { execFile, spawn } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const SERVICE_SOURCE_DIR = path.join(PROJECT_ROOT, 'equality-itemcode-version');
+const { normalizeRedeemAttempts } = require(path.join(app.isPackaged ? process.resourcesPath : PROJECT_ROOT, 'equality-itemcode-version', 'retry-settings.js'));
 const REQUIREMENT_LINKS = {
     node: 'https://nodejs.org/en/download',
     ytdlp: 'https://github.com/yt-dlp/yt-dlp/releases/latest',
@@ -495,6 +496,7 @@ function ensureRuntimeDirectory() {
         'ocr-code-utils.js',
         'youtube-chat-utils.js',
         'mac-ocr-runner.js',
+        'retry-settings.js',
         'detected-code-queue.js',
         'ocr_helper.swift',
         'service_config.json.example'
@@ -1242,6 +1244,7 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
         browser_redeem_headless: true,
         browser_token_login_enabled: true,
         browser_token_login_headless: true,
+        browser_redeem_max_attempts: normalizeRedeemAttempts(settings?.browserRedeemMaxAttempts),
         youtube_chat_enabled: Boolean(settings?.youtubeChatEnabled)
     });
     if (process.platform === 'win32') {
@@ -1435,6 +1438,13 @@ ipcMain.handle('requirements:help', async (_event, id) => {
     await shell.openExternal(requirementLink(id));
     return { ok: true };
 });
+ipcMain.handle('settings:save-redeem-attempts', (_event, value) => {
+    if (!Number.isInteger(value) || value < 1 || value > 100) throw new Error('จำนวนครั้งต้องเป็นจำนวนเต็ม 1–100');
+    const config = readConfig();
+    config.browser_redeem_max_attempts = value;
+    writeConfig(config);
+    return { ok: true };
+});
 ipcMain.handle('settings:load', () => {
     const config = readConfig();
     const itemcodeAccounts = normalizeItemcodeAccounts(config);
@@ -1448,6 +1458,7 @@ ipcMain.handle('settings:load', () => {
         telegramEnabled: config.telegram_enabled !== false && Boolean(config.telegram_token && config.telegram_chat_id),
         discordWebhookUrls,
         discordEnabled: config.discord_enabled !== false && discordWebhookUrls.length > 0,
+        browserRedeemMaxAttempts: normalizeRedeemAttempts(config.browser_redeem_max_attempts),
         youtubeChatAvailable: true,
         youtubeChatEnabled: config.youtube_chat_enabled !== false
     };
@@ -1464,6 +1475,7 @@ ipcMain.handle('settings:save', (_event, settings) => {
         telegram_chat_id: String(settings?.telegramChatId || '').trim(),
         telegram_enabled: Boolean(settings?.telegramEnabled),
         discord_enabled: Boolean(settings?.discordEnabled) && discordWebhookUrls.length > 0,
+        browser_redeem_max_attempts: normalizeRedeemAttempts(settings?.browserRedeemMaxAttempts),
         youtube_chat_enabled: Boolean(settings?.youtubeChatEnabled)
     });
     writeConfig(config);

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
     repairRequirementPaths: () => ipcRenderer.invoke('requirements:repair'),
     downloadRequirement: (id) => ipcRenderer.invoke('requirements:download', id),
     openRequirementHelp: (id) => ipcRenderer.invoke('requirements:help', id),
+    saveRedeemAttempts: (value) => ipcRenderer.invoke('settings:save-redeem-attempts', value),
     loadSettings: () => ipcRenderer.invoke('settings:load'),
     saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
     saveItemcodeAccountOrder: (accounts) => ipcRenderer.invoke('settings:save-itemcode-account-order', accounts),

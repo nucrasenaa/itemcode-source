@@ -59,6 +59,7 @@
   "password2": "",
 
   // เปิด/ปิด flow ใช้ itemcode ผ่าน Browser หลังพบ code และแจ้งเตือนแล้ว
+  "browser_redeem_max_attempts": 20,
   "browser_redeem_enabled": true,
   // true = ทำงานเบื้องหลัง, false = เปิดหน้าต่าง Browser ให้เห็น
   "browser_redeem_headless": true,

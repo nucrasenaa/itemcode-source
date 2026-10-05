@@ -21,7 +21,8 @@ const API_BASE_URL = "https://core-api.thehof.gg";
 const CLIENT_ID = "bcb3b4ce-67ad-11f0-9fe2-0242ac120002";
 const REDIRECT_URI = "https://member.thehof.gg/oauth/callback";
 const ITEMCODE_URL = `https://${MEMBER_DOMAIN}/talesrunner/itemcode`;
-const BROWSER_REDEEM_MAX_ATTEMPTS = 5;
+const { normalizeRedeemAttempts } = require('./retry-settings');
+function browserRedeemMaxAttempts() { return normalizeRedeemAttempts(config.browser_redeem_max_attempts); }
 const BROWSER_REDEEM_RETRY_DELAY_MS = 5000;
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15';
 
@@ -1387,25 +1388,25 @@ async function runBrowserRedeemAfterNotification(serial) {
         log(`[BROWSER] กำลังเปิดหน้า itemcode ด้วย${accountLabel}...`);
 
         let result = null;
-        for (let attempt = 1; attempt <= BROWSER_REDEEM_MAX_ATTEMPTS; attempt++) {
-            log(`[BROWSER] เริ่มเคลมผ่าน Browser ด้วย${accountLabel} ครั้งที่ ${attempt}/${BROWSER_REDEEM_MAX_ATTEMPTS}`);
-            logItemcodeEvent(serial, 'retry', `กำลังลองใช้ itemcode ผ่าน Browser ด้วย${accountLabel}`, attempt, BROWSER_REDEEM_MAX_ATTEMPTS);
+        for (let attempt = 1; attempt <= browserRedeemMaxAttempts(); attempt++) {
+            log(`[BROWSER] เริ่มเคลมผ่าน Browser ด้วย${accountLabel} ครั้งที่ ${attempt}/${browserRedeemMaxAttempts()}`);
+            logItemcodeEvent(serial, 'retry', `กำลังลองใช้ itemcode ผ่าน Browser ด้วย${accountLabel}`, attempt, browserRedeemMaxAttempts());
             const attemptResult = await redeemCodeWithBrowser(serial, account.username, account.password);
             result = {
                 ...attemptResult,
                 browser_attempt: attempt,
-                browser_max_attempts: BROWSER_REDEEM_MAX_ATTEMPTS,
+                browser_max_attempts: browserRedeemMaxAttempts(),
                 account_username: account.username,
                 account_order: accountOrder,
                 account_total: accounts.length
             };
 
             if (result.success) {
-                logItemcodeEvent(serial, 'redeemed', `ใช้ itemcode ผ่าน Browser สำเร็จด้วย${accountLabel}`, attempt, BROWSER_REDEEM_MAX_ATTEMPTS);
+                logItemcodeEvent(serial, 'redeemed', `ใช้ itemcode ผ่าน Browser สำเร็จด้วย${accountLabel}`, attempt, browserRedeemMaxAttempts());
                 break;
             }
 
-            if (attempt < BROWSER_REDEEM_MAX_ATTEMPTS) {
+            if (attempt < browserRedeemMaxAttempts()) {
                 log(`[BROWSER] ${accountLabel} ครั้งที่ ${attempt} ไม่สำเร็จ จะลองใหม่ใน ${BROWSER_REDEEM_RETRY_DELAY_MS / 1000} วินาที`);
                 await new Promise(resolve => setTimeout(resolve, BROWSER_REDEEM_RETRY_DELAY_MS));
             }
@@ -1440,7 +1441,7 @@ async function runBrowserRedeemAfterNotification(serial) {
             `โค้ด: ${serial}`,
             `บัญชี: ${account.username} (${accountOrder}/${accounts.length})`,
             `สถานะ: ${browserStatus}`,
-            `จำนวนครั้ง: ${result.browser_attempt || 1}/${result.browser_max_attempts || BROWSER_REDEEM_MAX_ATTEMPTS}`,
+            `จำนวนครั้ง: ${result.browser_attempt || 1}/${result.browser_max_attempts || browserRedeemMaxAttempts()}`,
             `ขั้นตอน: ${result.stage || 'unknown'}`,
             `รายละเอียด: ${browserDetail}`
         ].join('\n');

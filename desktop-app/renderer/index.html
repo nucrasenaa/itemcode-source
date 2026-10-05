@@ -76,6 +76,11 @@
                     <button class="button button-ghost" id="addItemcodeAccount" type="button">+ เพิ่มบัญชี</button>
                 </div>
                 <div class="itemcode-account-list" id="itemcodeAccountsList"></div>
+                <label class="field">
+                    <span>จำนวนครั้งสูงสุดที่ลองรับ ItemCode ต่อบัญชี</span>
+                    <input id="browserRedeemMaxAttempts" type="number" min="1" max="100" step="1" value="20" />
+                </label>
+                <p class="section-note">ค่าเริ่มต้น 20 ครั้ง (รวมครั้งแรก) กำหนดได้ 1–100 ครั้ง หยุดทันทีเมื่อสำเร็จ</p>
               </div>
               <div class="youtube-chat-box" id="youtubeChatSettings" hidden>
                 <div class="telegram-heading">
@@ -236,6 +241,10 @@
                     <button class="button button-ghost" id="closeChangelog" type="button">ปิด</button>
                 </div>
                 <div class="changelog-list">
+                    <article class="changelog-entry">
+                        <div class="changelog-version">เวอร์ชัน 0.2.11 (macOS / Windows)</div>
+                        <ul><li>ค่าเริ่มต้นลองรับ ItemCode สูงสุด 20 ครั้งต่อบัญชี</li><li>ปรับได้ 1–100 ครั้ง (รวมครั้งแรก) และบันทึกอัตโนมัติ</li></ul>
+                    </article>
                     <article class="changelog-entry">
                         <div class="changelog-version">เวอร์ชัน 0.2.10 (macOS)</div>
                         <ul>
