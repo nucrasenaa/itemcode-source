@@ -23,6 +23,7 @@ const REDIRECT_URI = "https://member.thehof.gg/oauth/callback";
 const ITEMCODE_URL = `https://${MEMBER_DOMAIN}/talesrunner/itemcode`;
 const { normalizeRedeemAttempts } = require('./retry-settings');
 const { browserResultEvents } = require('./browser-result-events');
+const { formatBrowserRetryFailureNotification } = require('./browser-retry-notification');
 function logBrowserResults(code, checkResult, browserResult) {
     for (const event of browserResultEvents(code, checkResult, browserResult)) {
         console.log(`[ITEMCODE] ${JSON.stringify(event)}`);
@@ -1461,6 +1462,13 @@ async function runBrowserRedeemAfterNotification(serial) {
 
     const accountsSucceeded = accountResults.filter(item => item.success).length;
     const allAccountsSucceeded = accountsSucceeded === accounts.length;
+    if (!allAccountsSucceeded) {
+        const failureMessage = formatBrowserRetryFailureNotification(serial, accountResults);
+        console.log(`[NOTIFICATION] ${JSON.stringify({
+            title: 'เติม ItemCode ไม่สำเร็จ',
+            body: failureMessage
+        })}`);
+    }
     log(`[BROWSER] เคลม itemcode ครบทุกบัญชีแล้ว (${accountsSucceeded}/${accounts.length} สำเร็จ) จึงเข้าสู่ช่วงพักสแกน OCR`);
 
     return {

@@ -816,6 +816,9 @@ api.onUpdateState(setUpdateState);
 api.onUpdateNotification(notification => {
     if (notification?.body) showToast(`${notification.title ? `${notification.title}: ` : ''}${notification.body}`);
 });
+api.onServiceNotification(notification => {
+    if (notification?.body) showToast(`${notification.title ? `${notification.title}: ` : ''}${notification.body}`, true);
+});
 api.onRequirementsUpdate(next => {
     requirements = next;
     renderRequirements();

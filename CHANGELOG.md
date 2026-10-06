@@ -2,6 +2,11 @@
 
 การเปลี่ยนแปลงสำคัญของ `Equality ItemCode Watcher`
 
+## [0.2.13] - 2026-10-06 (macOS / Windows)
+
+- เพิ่มการแจ้งเตือนในตัวแอปเมื่อ retry เติม ItemCode ผ่าน Browser ครบแล้วแต่ยังไม่สำเร็จ
+- คงการแจ้งเตือน Telegram และ Discord ตามเดิม
+
 ## [0.2.12] - 2026-10-06 (macOS / Windows)
 
 - ลบ section Service Debug Log และ YouTube Live Chat โดยยังอ่านแชตตามเดิม

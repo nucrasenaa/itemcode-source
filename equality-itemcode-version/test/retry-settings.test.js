@@ -1,6 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {normalizeRedeemAttempts} = require('../retry-settings');
+const {formatBrowserRetryFailureNotification} = require('../browser-retry-notification');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require.resolve('../index.js'), 'utf8');
@@ -17,6 +18,8 @@ for (const [configured, successAt, expected] of [[undefined, Infinity, 20], [3, 
             config: {browser_redeem_enabled:true},
             getItemcodeAccounts: () => [{username:'test',password:'test'}],
             browserRedeemMaxAttempts: () => normalizeRedeemAttempts(configured),
+            formatBrowserRetryFailureNotification,
+            sendDiscord: async () => false,
             log: () => {}, logItemcodeEvent: () => {},
             redeemCodeWithBrowser: async () => ({success: ++attempts >= successAt}),
             sendTelegram: async () => false,

@@ -96,6 +96,22 @@ function showUpdateNotification(title, body, onClick = null) {
     send('update:notification', payload);
 }
 
+function showServiceNotification(title, body) {
+    const payload = {
+        title: String(title || 'แจ้งเตือน').trim().slice(0, 120),
+        body: String(body || '').trim().slice(0, 3500)
+    };
+    if (!payload.body) return;
+    try {
+        if (Notification.isSupported()) {
+            new Notification(payload).show();
+        }
+    } catch (error) {
+        // The renderer toast below is still available when native notifications are unavailable.
+    }
+    send('service:notification', payload);
+}
+
 function versionParts(version) {
     return String(version || '')
         .replace(/^[vV]/, '')
@@ -498,6 +514,7 @@ function ensureRuntimeDirectory() {
         'mac-ocr-runner.js',
         'retry-settings.js',
         'browser-result-events.js',
+        'browser-retry-notification.js',
         'detected-code-queue.js',
         'ocr_helper.swift',
         'service_config.json.example'
@@ -1188,6 +1205,16 @@ function normalizeYoutubeChatEvent(event) {
     };
 }
 
+function normalizeServiceNotification(event) {
+    if (!event || typeof event !== 'object') return null;
+    const body = String(event.body || event.message || '').trim().slice(0, 3500);
+    if (!body) return null;
+    return {
+        title: String(event.title || 'แจ้งเตือน').trim().slice(0, 120),
+        body
+    };
+}
+
 function parseServiceLine(line) {
     const structured = line.match(/\[ITEMCODE\]\s*(\{.*\})/);
     if (structured) {
@@ -1217,6 +1244,15 @@ function consumeServiceOutput(chunk, bufferName) {
     for (const line of lines) {
         const event = parseServiceLine(line);
         if (event) send('service:itemcode', event);
+        const notificationMatch = line.match(/\[NOTIFICATION\]\s*(\{.*\})/);
+        if (notificationMatch) {
+            try {
+                const notification = normalizeServiceNotification(JSON.parse(notificationMatch[1]));
+                if (notification) showServiceNotification(notification.title, notification.body);
+            } catch (error) {
+                // Ignore malformed notifications; the raw line remains available in the service log.
+            }
+        }
         const chatMatch = line.match(/\[YOUTUBE_CHAT\]\s*(\{.*\})/);
         if (chatMatch) {
             try {

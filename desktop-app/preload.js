@@ -52,5 +52,10 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
         const listener = (_event, notification) => callback(notification);
         ipcRenderer.on('update:notification', listener);
         return () => ipcRenderer.removeListener('update:notification', listener);
+    },
+    onServiceNotification: (callback) => {
+        const listener = (_event, notification) => callback(notification);
+        ipcRenderer.on('service:notification', listener);
+        return () => ipcRenderer.removeListener('service:notification', listener);
     }
 });
