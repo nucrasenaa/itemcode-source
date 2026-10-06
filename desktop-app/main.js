@@ -497,6 +497,7 @@ function ensureRuntimeDirectory() {
         'youtube-chat-utils.js',
         'mac-ocr-runner.js',
         'retry-settings.js',
+        'browser-result-events.js',
         'detected-code-queue.js',
         'ocr_helper.swift',
         'service_config.json.example'
@@ -1165,6 +1166,8 @@ async function downloadRequirement(id) {
 function normalizeItemcodeEvent(event) {
     if (!event || !event.code) return null;
     return {
+        kind: event.kind === 'browser_final' ? 'browser_final' : '',
+        accountId: String(event.accountId || '').slice(0, 200),
         code: String(event.code).trim().toUpperCase().slice(0, 64),
         status: String(event.status || 'info').slice(0, 32),
         detail: String(event.detail || '').replace(/\s+/g, ' ').trim().slice(0, 500),

@@ -1,5 +1,6 @@
 const api = window.itemcodeDesktop;
 const elements = {
+    requirementsCard: document.getElementById('requirementsCard'),
     requirementsList: document.getElementById('requirementsList'),
     requirementSummary: document.getElementById('requirementSummary'),
     repairRequirementPaths: document.getElementById('repairRequirementPaths'),
@@ -9,11 +10,6 @@ const elements = {
     addItemcodeAccount: document.getElementById('addItemcodeAccount'),
     youtubeChatSettings: document.getElementById('youtubeChatSettings'),
     youtubeChatEnabled: document.getElementById('youtubeChatEnabled'),
-    youtubeChatCard: document.getElementById('youtubeChatCard'),
-    youtubeChatMessages: document.getElementById('youtubeChatMessages'),
-    emptyYoutubeChat: document.getElementById('emptyYoutubeChat'),
-    youtubeChatCount: document.getElementById('youtubeChatCount'),
-    clearYoutubeChat: document.getElementById('clearYoutubeChat'),
     discordWebhookList: document.getElementById('discordWebhookList'),
     addDiscordWebhook: document.getElementById('addDiscordWebhook'),
     startStop: document.getElementById('startStop'),
@@ -36,8 +32,6 @@ const elements = {
     emptyLog: document.getElementById('emptyLog'),
     logCount: document.getElementById('logCount'),
     logFilter: document.getElementById('logFilter'),
-    debugLog: document.getElementById('debugLog'),
-    clearDebugLog: document.getElementById('clearDebugLog'),
     toast: document.getElementById('toast')
 };
 
@@ -45,13 +39,9 @@ let requirements = [];
 let running = false;
 let eventCount = 0;
 let toastTimer = null;
-let debugLogStarted = false;
-let youtubeChatCount = 0;
-const renderedYoutubeChatIds = new Set();
 let itemcodeAccounts = [{ username: '', password: '' }];
 let discordWebhooks = [{ url: '' }];
 let draggedAccountIndex = null;
-let lastRequirementsReady = null;
 let accountOrderSaveQueue = Promise.resolve();
 let configRevision = 0;
 
@@ -395,7 +385,6 @@ function setInputs(values) {
     document.getElementById('telegramChatId').value = values?.telegramChatId || '';
     document.getElementById('telegramEnabled').checked = Boolean(values?.telegramEnabled);
     elements.youtubeChatSettings.hidden = values?.youtubeChatAvailable !== true;
-    elements.youtubeChatCard.hidden = values?.youtubeChatAvailable !== true;
     elements.youtubeChatEnabled.checked = values?.youtubeChatAvailable === true
         && values?.youtubeChatEnabled !== false;
     renderDiscordWebhooks(normalizeDiscordWebhooks(values));
@@ -404,7 +393,6 @@ function setInputs(values) {
 
 function setRunning(value, mode = 'running') {
     const nextRunning = Boolean(value);
-    if (!running && nextRunning) clearYoutubeChatMessages();
     running = nextRunning;
     elements.runState.dataset.running = String(running);
     elements.runStateText.textContent = !running
@@ -491,15 +479,9 @@ function renderRequirements() {
     elements.testItemcode.disabled = !allReady || running;
     elements.testTelegram.disabled = running;
 
-    // A complete requirement check is collapsed automatically on the first
-    // launch, and again when the user fixes missing requirements. The user's
-    // manual expand/collapse choice is preserved while the state is unchanged.
-    if (lastRequirementsReady === null || allReady !== lastRequirementsReady) {
-        setSectionCollapsed('requirementsContent', allReady, true);
-    } else if (!allReady) {
-        setSectionCollapsed('requirementsContent', false, false);
-    }
-    lastRequirementsReady = allReady;
+    // Hide the entire section only after a successful, complete check.
+    elements.requirementsCard.hidden = allReady;
+    if (!allReady) setSectionCollapsed('requirementsContent', false, false);
 }
 
 async function refreshRequirements() {
@@ -509,6 +491,9 @@ async function refreshRequirements() {
         requirements = await api.checkRequirements();
         renderRequirements();
     } catch (error) {
+        requirements = [];
+        renderRequirements();
+        elements.requirementSummary.textContent = 'ตรวจสอบ Requirement ไม่สำเร็จ กรุณาลองอีกครั้ง';
         showToast(error.message || 'ตรวจสอบ requirement ไม่สำเร็จ', true);
     } finally {
         elements.refreshRequirements.disabled = false;
@@ -560,7 +545,7 @@ function applyLogFilter() {
     }
     elements.emptyLog.hidden = visible > 0;
     elements.emptyLog.textContent = selectedStatus === 'all'
-        ? 'ยังไม่มี ItemCode ที่ตรวจพบ'
+        ? 'ยังไม่มีผลการเติม ItemCode ผ่านหน้าเว็บ'
         : `ยังไม่มีรายการสถานะ ${LOG_STATUS_LABELS[selectedStatus] || selectedStatus}`;
     elements.logCount.textContent = selectedStatus === 'all'
         ? `${visible} รายการ`
@@ -568,7 +553,8 @@ function applyLogFilter() {
 }
 
 function addItemcodeEvent(event) {
-    if (!event?.code) return;
+    if (!event?.code || event.kind !== 'browser_final' || !event.detail?.trim() || !event.accountId
+        || !['redeemed', 'redeem_failed'].includes(event.status)) return;
     const eventStatus = String(event.status || 'info');
     ensureLogFilterOption(eventStatus);
     elements.emptyLog.hidden = true;
@@ -578,7 +564,7 @@ function addItemcodeEvent(event) {
 
     const time = document.createElement('span');
     time.className = 'log-time';
-    time.textContent = new Date(event.time || Date.now()).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    time.textContent = String(eventCount + 1);
     const code = document.createElement('span');
     code.className = 'log-code';
     code.textContent = event.code;
@@ -591,7 +577,10 @@ function addItemcodeEvent(event) {
     status.classList.add(eventStatus.replace(/[^a-zA-Z0-9_-]/g, '_') || 'info');
     status.textContent = statusText(event);
 
-    row.append(time, code, detail, status);
+    const account = document.createElement('span');
+    account.className = 'log-account';
+    account.textContent = event.accountId;
+    row.append(time, code, detail, account, status);
     elements.logList.prepend(row);
     eventCount += 1;
     while (elements.logList.querySelectorAll('.log-line').length > 200) {
@@ -599,69 +588,6 @@ function addItemcodeEvent(event) {
         rows[rows.length - 1]?.remove();
     }
     applyLogFilter();
-}
-
-function addServiceLog(entry) {
-    if (!entry?.text) return;
-    if (!debugLogStarted) {
-        elements.debugLog.textContent = '';
-        debugLogStarted = true;
-    }
-    const prefix = entry.stream === 'stderr' ? '[stderr] ' : '[stdout] ';
-    elements.debugLog.textContent += `${prefix}${entry.text}`;
-    if (!elements.debugLog.textContent.endsWith('\n')) elements.debugLog.textContent += '\n';
-    const lines = elements.debugLog.textContent.split('\n');
-    if (lines.length > 1000) elements.debugLog.textContent = lines.slice(-1000).join('\n');
-    elements.debugLog.scrollTop = elements.debugLog.scrollHeight;
-}
-
-function clearYoutubeChatMessages() {
-    elements.youtubeChatMessages.replaceChildren();
-    elements.youtubeChatMessages.append(elements.emptyYoutubeChat);
-    elements.emptyYoutubeChat.hidden = false;
-    youtubeChatCount = 0;
-    renderedYoutubeChatIds.clear();
-    elements.youtubeChatCount.textContent = '0 ความคิดเห็น';
-}
-
-function addYoutubeChatMessage(message) {
-    const text = String(message?.text || '').trim();
-    if (!text) return;
-    const id = String(message?.id || '').slice(0, 256);
-    if (id && renderedYoutubeChatIds.has(id)) return;
-    if (id) {
-        renderedYoutubeChatIds.add(id);
-        if (renderedYoutubeChatIds.size > 500) {
-            renderedYoutubeChatIds.delete(renderedYoutubeChatIds.values().next().value);
-        }
-    }
-
-    elements.emptyYoutubeChat.hidden = true;
-    const row = document.createElement('article');
-    row.className = 'youtube-chat-message';
-    const header = document.createElement('div');
-    header.className = 'youtube-chat-message-header';
-    const author = document.createElement('span');
-    author.className = 'youtube-chat-author';
-    author.textContent = String(message?.author || 'ผู้ชม');
-    const time = document.createElement('time');
-    time.className = 'youtube-chat-time';
-    const parsedTime = new Date(message?.time || Date.now());
-    time.dateTime = Number.isNaN(parsedTime.getTime()) ? new Date().toISOString() : parsedTime.toISOString();
-    time.textContent = Number.isNaN(parsedTime.getTime())
-        ? new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        : parsedTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const body = document.createElement('p');
-    body.className = 'youtube-chat-text';
-    body.textContent = text;
-    header.append(author, time);
-    row.append(header, body);
-    elements.youtubeChatMessages.prepend(row);
-    youtubeChatCount += 1;
-    while (elements.youtubeChatMessages.querySelectorAll('.youtube-chat-message').length > 200) {
-        elements.youtubeChatMessages.querySelector('article.youtube-chat-message:last-of-type')?.remove();
-    }
-    elements.youtubeChatCount.textContent = `${youtubeChatCount} ความคิดเห็น`;
 }
 
 async function toggleService() {
@@ -844,10 +770,6 @@ elements.addDiscordWebhook.addEventListener('click', () => {
     markConfigDirty();
     elements.discordWebhookList.lastElementChild?.querySelector('[data-webhook-field="url"]')?.focus();
 });
-elements.clearDebugLog.addEventListener('click', () => {
-    elements.debugLog.textContent = 'ยังไม่มีข้อความจาก service';
-    debugLogStarted = false;
-});
 elements.cancelItemcode.addEventListener('click', closeItemcodeModal);
 document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !elements.changelogModal.hidden) closeChangelog();
@@ -856,8 +778,6 @@ for (const button of document.querySelectorAll('.collapse-toggle')) {
     button.addEventListener('click', () => toggleSection(button));
 }
 restoreSectionState('accountContent');
-restoreSectionState('debugContent');
-restoreSectionState('youtubeChatContent');
 elements.itemcodeForm.addEventListener('submit', async event => {
     event.preventDefault();
     const code = elements.testItemcodeValue.value.trim().toUpperCase();
@@ -880,7 +800,6 @@ document.getElementById('discordEnabled').addEventListener('change', () => {
 elements.youtubeChatEnabled.addEventListener('change', () => {
     markConfigDirty();
 });
-elements.clearYoutubeChat.addEventListener('click', clearYoutubeChatMessages);
 
 api.onServiceState(state => {
     setRunning(state.running, state.mode);
@@ -893,8 +812,6 @@ api.onServiceState(state => {
     }
 });
 api.onItemcodeEvent(addItemcodeEvent);
-api.onServiceLog(addServiceLog);
-api.onYoutubeChat(addYoutubeChatMessage);
 api.onUpdateState(setUpdateState);
 api.onUpdateNotification(notification => {
     if (notification?.body) showToast(`${notification.title ? `${notification.title}: ` : ''}${notification.body}`);

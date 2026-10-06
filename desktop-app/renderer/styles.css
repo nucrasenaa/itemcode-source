@@ -112,7 +112,7 @@ h2 { margin-bottom: 0; font-size: 19px; }
 .action-buttons { display: flex; align-items: center; gap: 8px; }
 .start-button { min-width: 112px; }
 .log-card { padding-bottom: 14px; }
-.log-header, .log-line { display: grid; grid-template-columns: 95px 170px minmax(0, 1fr) 150px; align-items: center; gap: 12px; }
+.log-header, .log-line { display: grid; grid-template-columns: 40px 170px minmax(0, 1fr) 140px 150px; align-items: center; gap: 12px; }
 .log-header { margin-top: 19px; padding: 0 12px 9px; color: #728aa8; font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .log-tools { display: flex; align-items: center; gap: 8px; }
 .log-filter-label { color: var(--muted); font-size: 11px; }
@@ -128,17 +128,6 @@ h2 { margin-bottom: 0; font-size: 19px; }
 .log-status.available, .log-status.retry_success, .log-status.redeemed { background: rgba(112,225,194,.12); color: var(--accent); }
 .log-status.retry, .log-status.redeem_failed { background: rgba(245,197,109,.12); color: var(--warning); }
 .empty-log { padding: 38px 12px 44px; color: #6f86a3; text-align: center; font-size: 12px; }
-.debug-card .section-note { margin-bottom: 12px; }
-.debug-log { min-height: 170px; max-height: 420px; margin: 0; overflow: auto; border: 1px solid rgba(165,190,225,.12); border-radius: 11px; padding: 13px; background: #071321; color: #b7c8dc; font: 11px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.youtube-chat-count { border: 1px solid rgba(112,225,194,.16); border-radius: 999px; padding: 7px 10px; background: rgba(112,225,194,.08); color: var(--accent); font-size: 11px; white-space: nowrap; }
-.youtube-chat-card .section-note { margin-bottom: 12px; }
-.youtube-chat-list { display: grid; gap: 8px; max-height: 390px; overflow: auto; padding-right: 2px; }
-.youtube-chat-message { border: 1px solid rgba(165,190,225,.11); border-radius: 11px; padding: 10px 12px; background: rgba(5,15,28,.33); }
-.youtube-chat-message-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.youtube-chat-author { min-width: 0; overflow: hidden; color: #dffcf5; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.youtube-chat-time { flex: none; color: #7088a7; font-size: 10px; font-variant-numeric: tabular-nums; }
-.youtube-chat-text { margin: 6px 0 0; color: #c8d7e9; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.empty-youtube-chat { padding: 32px 12px; color: #6f86a3; text-align: center; font-size: 12px; }
 .modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(1, 8, 17, .72); backdrop-filter: blur(8px); z-index: 10; }
 .modal-backdrop[hidden] { display: none; }
 .test-modal { width: min(420px, 100%); border: 1px solid var(--line); border-radius: 16px; padding: 22px; background: #10243d; box-shadow: 0 24px 80px rgba(0,0,0,.4); }
@@ -176,5 +165,7 @@ h2 { margin-bottom: 0; font-size: 19px; }
     .discord-webhook-row .field { grid-column: 2; }
     .discord-webhook-row .webhook-order { grid-column: 1; grid-row: 1; }
     .discord-webhook-row .remove-webhook { grid-column: 3; grid-row: 1; }
-    .log-header, .log-line { grid-template-columns: 76px 130px minmax(0, 1fr) 112px; gap: 8px; }
+    .log-header, .log-line { grid-template-columns: 30px 125px minmax(80px, 1fr) 90px 112px; gap: 8px; }
 }
+
+.log-account { overflow-wrap: anywhere; color: #b7c8dc; }

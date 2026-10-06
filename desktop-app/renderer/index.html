@@ -26,7 +26,7 @@
             </div>
         </header>
 
-        <section class="card requirements-card">
+        <section class="card requirements-card" id="requirementsCard">
             <div class="section-heading">
                 <div>
                     <p class="section-kicker">ขั้นตอนที่ 1</p>
@@ -158,60 +158,21 @@
                     <label class="log-filter-label" for="logFilter">แสดง</label>
                     <select class="log-filter" id="logFilter">
                         <option value="all">ทั้งหมด</option>
-                        <option value="available">เฉพาะใช้ได้</option>
                         <option value="redeemed">เฉพาะรับไอเทมสำเร็จ</option>
                         <option value="redeem_failed">เฉพาะรับไอเทมไม่สำเร็จ</option>
-                        <option value="retry">เฉพาะกำลัง retry</option>
-                        <option value="retry_success">เฉพาะ retry สำเร็จ</option>
                     </select>
                     <span class="log-count" id="logCount">0 รายการ</span>
                 </div>
             </div>
             <div class="log-header">
-                <span>เวลา</span>
-                <span>ItemCode</span>
-                <span>รายละเอียด</span>
-                <span>สถานะ</span>
+                <span>no</span>
+                <span>code</span>
+                <span>detail</span>
+                <span>id</span>
+                <span>status</span>
             </div>
             <div class="log-list" id="logList">
-                <div class="empty-log" id="emptyLog">ยังไม่มี ItemCode ที่ตรวจพบ</div>
-            </div>
-        </section>
-
-        <section class="card debug-card">
-            <div class="section-heading">
-                <div>
-                    <p class="section-kicker">รายละเอียดเชิงเทคนิค</p>
-                    <h2>Service Debug Log</h2>
-                </div>
-                <div class="heading-actions">
-                    <button class="collapse-toggle" type="button" data-target="debugContent" aria-expanded="true">ย่อ</button>
-                    <button class="button button-ghost" id="clearDebugLog" type="button">ล้าง Log</button>
-                </div>
-            </div>
-            <div class="collapsible-content" id="debugContent">
-                <p class="section-note">แสดงข้อความจาก stdout/stderr ของ service รวมถึงสาเหตุที่ Test Login จบด้วย code 1</p>
-                <pre class="debug-log" id="debugLog" aria-live="polite">ยังไม่มีข้อความจาก service</pre>
-            </div>
-        </section>
-
-        <section class="card youtube-chat-card" id="youtubeChatCard" hidden>
-            <div class="section-heading">
-                <div>
-                    <p class="section-kicker">ข้อความจากผู้ชม</p>
-                    <h2>YouTube Live Chat</h2>
-                </div>
-                <div class="heading-actions">
-                    <span class="youtube-chat-count" id="youtubeChatCount">0 ความคิดเห็น</span>
-                    <button class="collapse-toggle" type="button" data-target="youtubeChatContent" aria-expanded="true">ย่อ</button>
-                    <button class="button button-ghost" id="clearYoutubeChat" type="button">ล้าง</button>
-                </div>
-            </div>
-            <div class="collapsible-content" id="youtubeChatContent">
-                <p class="section-note">แสดงคอมเมนต์ที่ดึงได้จาก YouTube Live Chat ระหว่างการทำงาน</p>
-                <div class="youtube-chat-list" id="youtubeChatMessages" role="log" aria-live="polite" aria-relevant="additions">
-                    <div class="empty-youtube-chat" id="emptyYoutubeChat">ยังไม่มีคอมเมนต์จาก YouTube Live Chat</div>
-                </div>
+                <div class="empty-log" id="emptyLog">ยังไม่มีผลการเติม ItemCode ผ่านหน้าเว็บ</div>
             </div>
         </section>
 
@@ -241,6 +202,15 @@
                     <button class="button button-ghost" id="closeChangelog" type="button">ปิด</button>
                 </div>
                 <div class="changelog-list">
+                    <article class="changelog-entry">
+                        <div class="changelog-version">เวอร์ชัน 0.2.12 (macOS / Windows)</div>
+                        <ul>
+                            <li>ลบ Service Debug Log และหน้ารายการแชต โดยยังอ่านแชตตามเดิม</li>
+                            <li>ItemCode Log แสดงเฉพาะผลสุดท้ายหลังตรวจรายละเอียดและลองเติมผ่านเว็บ แยกตามบัญชี</li>
+                            <li>หัวตาราง no / code / detail / id / status</li>
+                            <li>ซ่อน Requirement เมื่อครบ และแสดงกลับเมื่อขาดหรือตรวจสอบไม่สำเร็จ</li>
+                        </ul>
+                    </article>
                     <article class="changelog-entry">
                         <div class="changelog-version">เวอร์ชัน 0.2.11 (macOS / Windows)</div>
                         <ul><li>ค่าเริ่มต้นลองรับ ItemCode สูงสุด 20 ครั้งต่อบัญชี</li><li>ปรับได้ 1–100 ครั้ง (รวมครั้งแรก) และบันทึกอัตโนมัติ</li></ul>

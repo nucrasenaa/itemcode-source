@@ -22,6 +22,12 @@ const CLIENT_ID = "bcb3b4ce-67ad-11f0-9fe2-0242ac120002";
 const REDIRECT_URI = "https://member.thehof.gg/oauth/callback";
 const ITEMCODE_URL = `https://${MEMBER_DOMAIN}/talesrunner/itemcode`;
 const { normalizeRedeemAttempts } = require('./retry-settings');
+const { browserResultEvents } = require('./browser-result-events');
+function logBrowserResults(code, checkResult, browserResult) {
+    for (const event of browserResultEvents(code, checkResult, browserResult)) {
+        console.log(`[ITEMCODE] ${JSON.stringify(event)}`);
+    }
+}
 function browserRedeemMaxAttempts() { return normalizeRedeemAttempts(config.browser_redeem_max_attempts); }
 const BROWSER_REDEEM_RETRY_DELAY_MS = 5000;
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15';
@@ -2082,6 +2088,7 @@ async function processDetectedCodes(codes, source = 'OCR') {
                             sentDisc = retryOutcome.sentDiscord || sentDisc;
                         }
 
+                        logBrowserResults(varCode, redeemResult, browserResult);
                         const browserSuccess = browserResult && browserResult.success === true;
                         if (browserSuccess || retryOutcome.retrySuccess) {
                             log(`[+] Node: parallel retry จบสำเร็จ (Browser=${browserSuccess ? 'สำเร็จ' : 'ไม่สำเร็จ'}, Check=${retryOutcome.retrySuccess ? 'สำเร็จ' : 'ไม่สำเร็จ'})`);
@@ -2115,7 +2122,8 @@ async function processDetectedCodes(codes, source = 'OCR') {
                             notified = true;
                         }
 
-                        await runBrowserRedeemAfterNotification(varCode);
+                        const browserResult = await runBrowserRedeemAfterNotification(varCode);
+                        logBrowserResults(varCode, redeemResult, browserResult);
 
 
                         // Add all variations to history to prevent duplicate notifications for this code family
