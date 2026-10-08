@@ -2,6 +2,13 @@
 
 การเปลี่ยนแปลงสำคัญของ `Equality ItemCode Watcher`
 
+## [Unreleased]
+
+### เพิ่มเติม
+
+- เพิ่มหน้า Login Discord ก่อนเข้าหน้าหลัก และตรวจสมาชิกกับ Server ID ที่อนุญาตจาก Node auth server
+- เพิ่มปุ่ม `Contact me` สำหรับผู้ใช้ที่ยังไม่มีสิทธิ์เข้า Server
+
 ## [0.2.7] - 2026-09-28 (Windows)
 
 ### แก้ไข

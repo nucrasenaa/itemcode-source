@@ -9,6 +9,7 @@ const {
 const { autoUpdater } = require('electron-updater');
 const crypto = require('crypto');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
@@ -44,6 +45,14 @@ let macUpdateAvailable = false;
 let macUpdateDownloadInFlight = false;
 let macUpdatePath = '';
 let updateInstallInFlight = false;
+let discordAuthState = {
+    authenticated: false,
+    authorized: false,
+    user: null,
+    matchedServerId: '',
+    message: 'กรุณา Login ด้วย Discord ก่อนใช้งาน'
+};
+let discordLoginInFlight = null;
 
 // Download updates automatically, then let the user choose when to restart.
 // autoInstallOnAppQuit also covers the case where the user closes the app
@@ -534,6 +543,8 @@ function readConfig() {
                     discord_webhook_url: [],
                     discord_webhook_urls: [],
                     discord_enabled: false,
+                    discord_auth_server_url: 'http://127.0.0.1:3000',
+                    discord_contact_url: '',
                     browser_redeem_enabled: true,
                     browser_redeem_headless: true,
                     browser_token_login_enabled: true,
@@ -545,6 +556,185 @@ function readConfig() {
     } catch (error) {
         throw new Error(`อ่าน service_config.json ไม่สำเร็จ: ${error.message}`);
     }
+}
+
+function discordAuthServerUrl(config = {}) {
+    const configured = process.env.DISCORD_AUTH_SERVER_URL || config.discord_auth_server_url || 'http://127.0.0.1:3000';
+    const parsed = new URL(String(configured));
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('DISCORD_AUTH_SERVER_URL ต้องเป็น http:// หรือ https://');
+    }
+    return parsed.toString().replace(/\/$/, '');
+}
+
+function safeDiscordContactUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''));
+        if (['https:', 'discord:'].includes(parsed.protocol)) return parsed.toString();
+    } catch (error) {
+        // Invalid or empty contact URLs are treated as unavailable.
+    }
+    return '';
+}
+
+async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            Accept: 'application/json',
+            ...(options.headers || {})
+        }
+    });
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = null;
+    }
+    if (!response.ok) {
+        throw new Error(payload?.message || `Auth server returned HTTP ${response.status}`);
+    }
+    return payload || {};
+}
+
+async function loadDiscordPublicConfig() {
+    const config = readConfig();
+    const fallback = safeDiscordContactUrl(config.discord_contact_url);
+    try {
+        const baseUrl = discordAuthServerUrl(config);
+        const payload = await fetchJson(`${baseUrl}/api/public-config`);
+        return {
+            ok: true,
+            contactUrl: safeDiscordContactUrl(payload.contactUrl) || fallback,
+            authServerUrl: baseUrl
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            contactUrl: fallback,
+            message: `เชื่อมต่อ Discord auth server ไม่ได้: ${error.message}`
+        };
+    }
+}
+
+async function loginDiscord() {
+    if (discordLoginInFlight) return discordLoginInFlight;
+    discordLoginInFlight = (async () => {
+        discordAuthState = {
+            ...discordAuthState,
+            message: 'กำลังเปิดหน้า Login Discord...'
+        };
+        try {
+            const expectedState = crypto.randomBytes(24).toString('hex');
+            // The callback server chooses a random port, so create a small
+            // wrapper to let it return the final URL to the auth server.
+            const callbackResult = await new Promise((resolve, reject) => {
+                let settled = false;
+                let callbackServer;
+                const timeout = setTimeout(() => finish(new Error('หมดเวลารอการ Login Discord')), 5 * 60 * 1000);
+                const finish = (error, result) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    if (callbackServer) callbackServer.close();
+                    if (error) reject(error);
+                    else resolve(result);
+                };
+                callbackServer = http.createServer((request, response) => {
+                    try {
+                        const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
+                        if (requestUrl.pathname !== '/callback') {
+                            response.writeHead(404);
+                            response.end('Not found');
+                            return;
+                        }
+                        if (requestUrl.searchParams.get('state') !== expectedState) {
+                            response.writeHead(400);
+                            response.end('Invalid OAuth state');
+                            finish(new Error('ตรวจสอบ OAuth state ไม่ผ่าน'));
+                            return;
+                        }
+                        const errorCode = requestUrl.searchParams.get('error');
+                        if (errorCode) {
+                            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                            response.end('<!doctype html><title>Discord Login</title><p>ยกเลิกหรือ Login Discord ไม่สำเร็จ สามารถกลับไปที่แอปได้</p>');
+                            finish(new Error(requestUrl.searchParams.get('message') || `Discord OAuth error: ${errorCode}`));
+                            return;
+                        }
+                        const ticket = requestUrl.searchParams.get('ticket');
+                        if (!ticket) {
+                            response.writeHead(400);
+                            response.end('Missing login ticket');
+                            finish(new Error('Auth server ไม่ได้ส่ง login ticket กลับมา'));
+                            return;
+                        }
+                        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        response.end('<!doctype html><title>Discord Login</title><p>Login สำเร็จแล้ว ปิดหน้านี้และกลับไปที่ ItemCode Watcher ได้</p>');
+                        finish(null, { ticket });
+                    } catch (error) {
+                        response.writeHead(500);
+                        response.end('OAuth callback error');
+                        finish(error);
+                    }
+                });
+                callbackServer.once('error', finish);
+                callbackServer.listen(0, '127.0.0.1', async () => {
+                    try {
+                        const address = callbackServer.address();
+                        const localCallback = `http://127.0.0.1:${address.port}/callback`;
+                        const baseUrl = discordAuthServerUrl(readConfig());
+                        const loginUrl = new URL(`${baseUrl}/auth/discord/start`);
+                        loginUrl.searchParams.set('state', expectedState);
+                        loginUrl.searchParams.set('callback', localCallback);
+                        await shell.openExternal(loginUrl.toString());
+                    } catch (error) {
+                        finish(error);
+                    }
+                });
+            });
+
+            const config = readConfig();
+            const baseUrl = discordAuthServerUrl(config);
+            const session = await fetchJson(`${baseUrl}/api/discord/session?ticket=${encodeURIComponent(callbackResult.ticket)}`);
+            const allowlist = await fetchJson(`${baseUrl}/api/authorized-servers`);
+            const guildIds = new Set((session.guildIds || []).map(id => String(id)));
+            const serverIds = Array.isArray(allowlist.serverIds)
+                ? allowlist.serverIds.map(id => String(id))
+                : [];
+            const matchedServerId = serverIds.find(id => guildIds.has(id)) || '';
+            const authorized = Boolean(matchedServerId);
+            const contactConfig = await loadDiscordPublicConfig();
+            discordAuthState = {
+                authenticated: true,
+                authorized,
+                user: session.user || null,
+                matchedServerId,
+                message: authorized
+                    ? 'ตรวจสอบ Discord Server ผ่านแล้ว'
+                    : 'บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต'
+            };
+            return {
+                ok: true,
+                authorized,
+                user: session.user || null,
+                matchedServerId,
+                contactUrl: contactConfig.contactUrl,
+                message: discordAuthState.message
+            };
+        } catch (error) {
+            discordAuthState = {
+                authenticated: false,
+                authorized: false,
+                user: null,
+                matchedServerId: '',
+                message: error.message
+            };
+            return { ok: false, authorized: false, message: error.message };
+        } finally {
+            discordLoginInFlight = null;
+        }
+    })();
+    return discordLoginInFlight;
 }
 
 function writeConfig(config) {
@@ -1404,6 +1594,27 @@ ipcMain.handle('requirements:repair', async () => {
 });
 ipcMain.handle('requirements:help', async (_event, id) => {
     await shell.openExternal(requirementLink(id));
+    return { ok: true };
+});
+ipcMain.handle('discord:config', () => loadDiscordPublicConfig());
+ipcMain.handle('discord:auth-state', () => ({ ...discordAuthState }));
+ipcMain.handle('discord:login', () => loginDiscord());
+ipcMain.handle('discord:contact', async () => {
+    const publicConfig = await loadDiscordPublicConfig();
+    if (!publicConfig.contactUrl) {
+        return { ok: false, message: 'ยังไม่ได้ตั้งค่า DISCORD_CONTACT_URL ใน auth server' };
+    }
+    await shell.openExternal(publicConfig.contactUrl);
+    return { ok: true };
+});
+ipcMain.handle('discord:logout', () => {
+    discordAuthState = {
+        authenticated: false,
+        authorized: false,
+        user: null,
+        matchedServerId: '',
+        message: 'กรุณา Login ด้วย Discord ก่อนใช้งาน'
+    };
     return { ok: true };
 });
 ipcMain.handle('settings:load', () => {

@@ -1,5 +1,11 @@
 const api = window.itemcodeDesktop;
 const elements = {
+    discordGate: document.getElementById('discordGate'),
+    appShell: document.getElementById('appShell'),
+    discordLogin: document.getElementById('discordLogin'),
+    discordContact: document.getElementById('discordContact'),
+    discordGateStatus: document.getElementById('discordGateStatus'),
+    discordGateUser: document.getElementById('discordGateUser'),
     requirementsList: document.getElementById('requirementsList'),
     requirementSummary: document.getElementById('requirementSummary'),
     repairRequirementPaths: document.getElementById('repairRequirementPaths'),
@@ -45,6 +51,7 @@ let draggedAccountIndex = null;
 let lastRequirementsReady = null;
 let accountOrderSaveQueue = Promise.resolve();
 let configRevision = 0;
+let discordContactUrl = '';
 
 const SECTION_STATE_PREFIX = 'itemcode.desktop.section.';
 const LOG_STATUS_LABELS = {
@@ -62,6 +69,58 @@ function showToast(message, error = false) {
     elements.toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => elements.toast.classList.remove('show'), 4200);
+}
+
+function setDiscordGateStatus(message, error = false) {
+    elements.discordGateStatus.textContent = message || '';
+    elements.discordGateStatus.classList.toggle('error', error);
+}
+
+function setDiscordAccess(authorized, user = null) {
+    const hasAccess = Boolean(authorized);
+    elements.discordGate.hidden = hasAccess;
+    elements.appShell.hidden = !hasAccess;
+    if (user) {
+        const displayName = user.global_name || user.username || user.id || 'Discord user';
+        elements.discordGateUser.textContent = `Login เป็น ${displayName}`;
+        elements.discordGateUser.hidden = false;
+    } else {
+        elements.discordGateUser.hidden = true;
+    }
+}
+
+async function openDiscordContact() {
+    try {
+        const result = await api.openDiscordContact();
+        if (!result?.ok) setDiscordGateStatus(result?.message || 'เปิด Contact ไม่สำเร็จ', true);
+    } catch (error) {
+        setDiscordGateStatus(error.message || 'เปิด Contact ไม่สำเร็จ', true);
+    }
+}
+
+async function loginWithDiscord() {
+    elements.discordLogin.disabled = true;
+    setDiscordGateStatus('กำลังเปิดหน้า Login Discord...');
+    try {
+        const result = await api.loginDiscord();
+        if (result?.contactUrl) {
+            discordContactUrl = result.contactUrl;
+            elements.discordContact.disabled = false;
+        }
+        if (result?.authorized) {
+            setDiscordAccess(true, result.user);
+            setDiscordGateStatus(result.message || 'ตรวจสอบ Discord Server ผ่านแล้ว');
+            showToast('Login Discord สำเร็จ');
+            return;
+        }
+        setDiscordAccess(false, result?.user || null);
+        setDiscordGateStatus(result?.message || 'บัญชีนี้ไม่ได้อยู่ใน Server ที่อนุญาต', true);
+    } catch (error) {
+        setDiscordAccess(false);
+        setDiscordGateStatus(error.message || 'Login Discord ไม่สำเร็จ', true);
+    } finally {
+        elements.discordLogin.disabled = false;
+    }
 }
 
 function setUpdateState(state = {}) {
@@ -781,6 +840,8 @@ elements.cancelItemcode.addEventListener('click', closeItemcodeModal);
 document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !elements.changelogModal.hidden) closeChangelog();
 });
+elements.discordLogin.addEventListener('click', loginWithDiscord);
+elements.discordContact.addEventListener('click', openDiscordContact);
 for (const button of document.querySelectorAll('.collapse-toggle')) {
     button.addEventListener('click', () => toggleSection(button));
 }
@@ -829,11 +890,21 @@ api.onRequirementsUpdate(next => {
 
 (async function init() {
     try {
-        const [settings, state, update] = await Promise.all([
+        const [discordConfig, discordState, settings, state, update] = await Promise.all([
+            api.getDiscordConfig(),
+            api.getDiscordAuthState(),
             api.loadSettings(),
             api.getServiceState(),
             api.getUpdateStatus()
         ]);
+        discordContactUrl = discordConfig?.contactUrl || '';
+        elements.discordContact.disabled = !discordContactUrl;
+        if (!discordConfig?.ok) {
+            setDiscordGateStatus(discordConfig?.message || 'ยังเชื่อมต่อ Discord auth server ไม่ได้', true);
+        } else {
+            setDiscordGateStatus('พร้อม Login Discord');
+        }
+        setDiscordAccess(discordState?.authorized, discordState?.user);
         setInputs(settings);
         setRunning(state.running, state.mode);
         setUpdateState(update);
