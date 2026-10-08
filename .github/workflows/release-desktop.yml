@@ -26,13 +26,15 @@ jobs:
           fi
       - name: Create release before platform publishers start
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          RELEASE_REPO: nucrasenaa/itemcode-releases
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists"
           else
             gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
+              --repo "$RELEASE_REPO" \
+              --target main \
               --title "Equality ItemCode Watcher $GITHUB_REF_NAME" \
               --generate-notes
           fi
