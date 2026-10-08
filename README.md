@@ -54,7 +54,8 @@ cp node_service/.session_config.json.example node_service/.session_config.json
 
 ## Build และ Release
 
-Desktop app ใช้ Electron Builder และเผยแพร่ผ่าน GitHub Releases เมื่อ push tag รูปแบบ `v*`
+Desktop app ใช้ Electron Builder และเผยแพร่ผ่าน `nucrasenaa/itemcode-releases`
+ซึ่งเก็บเฉพาะ release artifacts และไม่เก็บ source code เมื่อ push tag รูปแบบ `v*`
 
 ```bash
 cd desktop-app

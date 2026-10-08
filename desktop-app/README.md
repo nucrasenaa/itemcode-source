@@ -30,10 +30,11 @@ Changelog ภาษาไทย และ log ที่กรองได้ท�
 
 ## Auto update ผ่าน GitHub Releases
 
-โปรเจกต์ตั้งค่า `electron-updater` ให้ใช้ public repository
-`nucrasenaa/itemcode` แล้ว การปล่อยเวอร์ชันให้เพิ่ม version ใน
+โปรเจกต์ตั้งค่า `electron-updater` ให้ใช้ public release-only repository
+`nucrasenaa/itemcode-releases` แล้ว การปล่อยเวอร์ชันให้เพิ่ม version ใน
 `package.json` เช่น `0.2.1` และสร้าง tag ให้ตรงกัน เช่น `v0.2.1` จากนั้น GitHub Actions
 จะ build และ publish artifacts ของ macOS/Windows ไปยัง GitHub Release
+โดย workflow ใช้ secret `RELEASE_REPO_TOKEN` สำหรับ repo release-only
 
 ```bash
 git tag v0.2.1

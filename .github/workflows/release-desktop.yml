@@ -85,4 +85,6 @@ jobs:
         working-directory: desktop-app
         run: npm run dist -- --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The release-only repository is separate from the private source repo.
+          # Add a PAT with access to nucrasenaa/itemcode-releases as RELEASE_REPO_TOKEN.
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
