@@ -68,7 +68,7 @@
     "publish": {
       "provider": "github",
       "owner": "nucrasenaa",
-      "repo": "itemcode",
+      "repo": "itemcode-releases",
       "releaseType": "release"
     }
   },

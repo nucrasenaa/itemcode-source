@@ -24,7 +24,7 @@ const REQUIREMENT_LINKS = {
     ocr: 'https://github.com/Apple/Vision',
     browser: 'https://playwright.dev/docs/browsers'
 };
-const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/nucrasenaa/itemcode/releases/latest';
+const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/nucrasenaa/itemcode-releases/releases/latest';
 
 function requirementLink(id) {
     if (id === 'ocr' && process.platform === 'win32') {
