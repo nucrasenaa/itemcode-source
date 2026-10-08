@@ -18,7 +18,7 @@ server ที่ตั้งไว้ใน `service_config.json`:
 
 ```json
 {
-  "discord_auth_server_url": "https://auth.example.com"
+  "discord_auth_server_url": "https://equalityitemcode.threemandev.com"
 }
 ```
 
@@ -35,10 +35,22 @@ ItemCode เหลือ 1 บัญชี และจะไม่แสดง 
 
 ## สร้างไฟล์ติดตั้ง
 
+Release build จะเตรียมไฟล์ป้องกันและรวม runtime ที่ต้องใช้ไว้ใน installer/DMG
+ได้แก่ Node.js, FFmpeg, yt-dlp และ Playwright Chromium จึงไม่ต้องดาวน์โหลดไฟล์
+เหล่านี้หลังติดตั้ง (ต้อง build บนระบบปฏิบัติการเป้าหมาย)
+
 ```bash
-npm run dist -- --mac
-npm run dist -- --win
+# สร้าง release สำหรับระบบปัจจุบัน
+npm run dist:release -- --win
+npm run dist:release -- --mac
+
+# สร้างทุก target ที่รองรับบน CI
+npm run dist:release
 ```
+
+ขั้นตอนนี้ใช้ JavaScript obfuscation, ASAR integrity และ Electron fuses เพื่อเพิ่ม
+ต้นทุนการ reverse engineer แต่ไม่สามารถทำให้ client ที่ติดตั้งแล้วเป็นความลับถาวรได้
+ดังนั้น secret และกฎอนุญาตต้องอยู่ที่ auth server เท่านั้น
 
 หน้าจอหลักมีบัญชี Check Serial และรายการบัญชีรับ ItemCode ที่เพิ่มได้หลายรายการ
 ระบบจะรับ ItemCode ตามลำดับบัญชีที่เพิ่มไว้ แล้ววนกลับรายการแรกเมื่อถึงรายการสุดท้าย
@@ -52,13 +64,13 @@ Changelog ภาษาไทย และ log ที่กรองได้ท�
 
 โปรเจกต์ตั้งค่า `electron-updater` ให้ใช้ public release-only repository
 `nucrasenaa/itemcode-releases` แล้ว การปล่อยเวอร์ชันให้เพิ่ม version ใน
-`package.json` เช่น `0.2.1` และสร้าง tag ให้ตรงกัน เช่น `v0.2.1` จากนั้น GitHub Actions
+`package.json` เช่น `3.0.0` และสร้าง tag ให้ตรงกัน เช่น `v3.0.0` จากนั้น GitHub Actions
 จะ build และ publish artifacts ของ macOS/Windows ไปยัง GitHub Release
 โดย workflow ใช้ secret `RELEASE_REPO_TOKEN` สำหรับ repo release-only
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v3.0.0
+git push origin v3.0.0
 ```
 
 แอปจะตรวจสอบ Update อัตโนมัติหลังเปิดประมาณ 3 วินาที และมีปุ่มตรวจสอบเอง

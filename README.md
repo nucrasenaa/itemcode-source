@@ -59,9 +59,14 @@ Desktop app ใช้ Electron Builder และเผยแพร่ผ่า�
 
 ```bash
 cd desktop-app
-npm run dist -- --mac
-npm run dist -- --win
+npm run dist:release -- --mac
+npm run dist:release -- --win
 ```
+
+Release build จะ obfuscate JavaScript, เปิดใช้ ASAR integrity/Electron fuses และ
+รวม Node.js, FFmpeg, yt-dlp กับ Playwright Chromium ไว้ในแพ็กเกจ เพื่อให้ผู้ใช้ไม่
+ต้องดาวน์โหลด runtime เพิ่มหลังติดตั้ง ทั้งนี้ยังควรเก็บ secret และกฎอนุญาตไว้ที่
+server เพราะไฟล์ที่อยู่บนเครื่องผู้ใช้ไม่สามารถป้องกันการวิเคราะห์ได้ 100%
 
 Workflow release อยู่ที่ `.github/workflows/release-desktop.yml`
 

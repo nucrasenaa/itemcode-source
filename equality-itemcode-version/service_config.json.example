@@ -13,7 +13,7 @@
   "discord_enabled": false,
 
   // Discord OAuth2 gate: URL ของ Node auth server ที่คุณนำไป deploy เอง
-  "discord_auth_server_url": "http://127.0.0.1:3000",
+  "discord_auth_server_url": "https://equalityitemcode.threemandev.com",
   // ใช้เป็น fallback หาก auth server ส่ง contactUrl ไม่ได้
   "discord_contact_url": "",
 

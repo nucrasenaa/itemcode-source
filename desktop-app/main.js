@@ -593,7 +593,7 @@ function readConfig() {
                     discord_webhook_url: [],
                     discord_webhook_urls: [],
                     discord_enabled: false,
-                    discord_auth_server_url: 'http://127.0.0.1:3000',
+                    discord_auth_server_url: 'https://equalityitemcode.threemandev.com',
                     discord_contact_url: '',
                     browser_redeem_enabled: true,
                     browser_redeem_headless: true,
@@ -609,7 +609,9 @@ function readConfig() {
 }
 
 function discordAuthServerUrl(config = {}) {
-    const configured = process.env.DISCORD_AUTH_SERVER_URL || config.discord_auth_server_url || 'http://127.0.0.1:3000';
+    const configured = process.env.DISCORD_AUTH_SERVER_URL
+        || (!app.isPackaged && config.discord_auth_server_url)
+        || 'https://equalityitemcode.threemandev.com';
     const parsed = new URL(String(configured));
     if (!['http:', 'https:'].includes(parsed.protocol)) {
         throw new Error('DISCORD_AUTH_SERVER_URL ต้องเป็น http:// หรือ https://');
@@ -1005,12 +1007,10 @@ function uniquePaths(values) {
 }
 
 function bundledToolCandidates(tool) {
-    if (!app.isPackaged || process.platform !== 'win32') return [];
-    const executable = tool === 'node'
-        ? 'node.exe'
-        : tool === 'ffmpeg'
-            ? 'ffmpeg.exe'
-            : 'yt-dlp.exe';
+    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) return [];
+    const executable = process.platform === 'win32'
+        ? (tool === 'node' ? 'node.exe' : tool === 'ffmpeg' ? 'ffmpeg.exe' : 'yt-dlp.exe')
+        : (tool === 'node' ? 'node' : tool === 'ffmpeg' ? 'ffmpeg' : 'yt-dlp');
     return [
         path.join(process.resourcesPath, 'tools', tool, executable),
         path.join(process.resourcesPath, 'tools', executable)
@@ -1092,7 +1092,10 @@ function macHomebrewFormulaCandidates(formula, binary) {
 function macToolCandidates(tool) {
     if (process.platform !== 'darwin') return [];
     const home = os.homedir();
-    const candidates = macExecutableDirectories().map(directory => path.join(directory, tool));
+    const candidates = [
+        ...bundledToolCandidates(tool === 'yt-dlp' ? 'ytdlp' : tool),
+        ...macExecutableDirectories().map(directory => path.join(directory, tool))
+    ];
 
     if (tool === 'node') {
         candidates.push(
@@ -1861,7 +1864,8 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: true
+            sandbox: true,
+            devTools: false
         }
     });
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));

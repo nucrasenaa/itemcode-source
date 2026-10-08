@@ -23,6 +23,9 @@ node_service/.auth/
 node_service/node_modules/
 desktop-app/node_modules/
 desktop-app/dist/
+desktop-app/bundled/
+desktop-app/.protected-app/
+desktop-app/.protected-service/
 
 # Databases & local history
 ocr_history.json
