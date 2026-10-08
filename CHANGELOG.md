@@ -2,6 +2,11 @@
 
 การเปลี่ยนแปลงสำคัญของ `Equality ItemCode Watcher`
 
+## [0.2.14] - 2026-10-09 (macOS / Windows)
+
+- เปลี่ยนจุดตรวจสอบ Update ไปยัง nucrasenaa/itemcode-releases
+- ใช้เป็นรุ่นเชื่อมต่อสำหรับผู้ใช้รุ่นเดิมก่อนย้ายไประบบ Release-only
+
 ## [0.2.13] - 2026-10-06 (macOS / Windows)
 
 - เพิ่มการแจ้งเตือนในตัวแอปเมื่อ retry เติม ItemCode ผ่าน Browser ครบแล้วแต่ยังไม่สำเร็จ
