@@ -33,6 +33,12 @@ button { cursor: pointer; }
 .discord-gate-card h1 { margin-bottom: 12px; font-size: 28px; }
 .discord-gate-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .discord-gate-actions { display: flex; justify-content: center; gap: 10px; margin-top: 24px; }
+.license-gate-form { margin-top: 22px; }
+.license-divider { display: flex; align-items: center; gap: 10px; color: #728aa8; font-size: 11px; }
+.license-divider::before, .license-divider::after { flex: 1; height: 1px; background: var(--line); content: ''; }
+.license-gate-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; }
+.license-gate-input-row input { width: 100%; border: 1px solid rgba(165,190,225,.18); border-radius: 10px; outline: none; padding: 11px 12px; background: rgba(4,13,25,.55); color: var(--text); font-size: 12px; text-transform: uppercase; }
+.license-gate-input-row input:focus { border-color: rgba(112,225,194,.66); box-shadow: 0 0 0 3px rgba(112,225,194,.09); }
 .discord-gate-status { min-height: 20px; margin: 18px 0 0; color: var(--accent); font-size: 12px; line-height: 1.55; }
 .discord-gate-status.error { color: var(--warning); }
 .discord-gate-user { margin: 8px 0 0; color: #c8d7e9; font-size: 12px; }

@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
     getDiscordConfig: () => ipcRenderer.invoke('discord:config'),
     getDiscordAuthState: () => ipcRenderer.invoke('discord:auth-state'),
     loginDiscord: () => ipcRenderer.invoke('discord:login'),
+    activateLicense: (code) => ipcRenderer.invoke('license:activate', code),
+    heartbeatAuth: () => ipcRenderer.invoke('discord:heartbeat'),
     openDiscordContact: () => ipcRenderer.invoke('discord:contact'),
     logoutDiscord: () => ipcRenderer.invoke('discord:logout'),
     loadSettings: () => ipcRenderer.invoke('settings:load'),
@@ -41,6 +43,11 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
         const listener = (_event, entry) => callback(entry);
         ipcRenderer.on('service:log', listener);
         return () => ipcRenderer.removeListener('service:log', listener);
+    },
+    onDiscordAuthState: (callback) => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('discord:auth-state', listener);
+        return () => ipcRenderer.removeListener('discord:auth-state', listener);
     },
     onUpdateState: (callback) => {
         const listener = (_event, state) => callback(state);

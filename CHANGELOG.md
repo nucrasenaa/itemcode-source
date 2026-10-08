@@ -8,6 +8,9 @@
 
 - เพิ่มหน้า Login Discord ก่อนเข้าหน้าหลัก และตรวจสมาชิกกับ Server ID ที่อนุญาตจาก Node auth server
 - เพิ่มปุ่ม `Contact me` สำหรับผู้ใช้ที่ยังไม่มีสิทธิ์เข้า Server
+- เพิ่มการ Activate License code จากหน้าจอแรก รองรับอายุ 3, 7 และ 30 วัน
+- ผู้ใช้ License จำกัดบัญชีรับ ItemCode 1 บัญชี และซ่อน Telegram/Discord Notification
+- เพิ่ม session Discord อายุ 30 วัน, heartbeat และหน้า License Manager สำหรับดู active users
 
 ## [0.2.7] - 2026-09-28 (Windows)
 
