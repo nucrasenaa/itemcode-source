@@ -559,6 +559,11 @@ function ensureRuntimeDirectory() {
             fs.copyFileSync(from, path.join(target, file));
         }
     }
+    const bundledModules = path.join(source, 'node_modules');
+    const runtimePlaywright = path.join(target, 'node_modules', 'playwright');
+    if (fs.existsSync(path.join(bundledModules, 'playwright')) && !fs.existsSync(runtimePlaywright)) {
+        fs.cpSync(bundledModules, path.join(target, 'node_modules'), { recursive: true });
+    }
     if (process.platform === 'darwin') {
         const ocrHelper = path.join(target, 'ocr_helper');
         if (fs.existsSync(ocrHelper)) fs.chmodSync(ocrHelper, 0o755);
@@ -999,6 +1004,19 @@ function uniquePaths(values) {
     return [...new Set(values.filter(Boolean))];
 }
 
+function bundledToolCandidates(tool) {
+    if (!app.isPackaged || process.platform !== 'win32') return [];
+    const executable = tool === 'node'
+        ? 'node.exe'
+        : tool === 'ffmpeg'
+            ? 'ffmpeg.exe'
+            : 'yt-dlp.exe';
+    return [
+        path.join(process.resourcesPath, 'tools', tool, executable),
+        path.join(process.resourcesPath, 'tools', executable)
+    ];
+}
+
 function childDirectoryNames(root) {
     if (!root || !fs.existsSync(root)) return [];
     try {
@@ -1137,7 +1155,7 @@ function toolEnvironment(overrides = {}) {
 function windowsFfmpegCandidates() {
     if (process.platform !== 'win32') return [];
 
-    const candidates = [];
+    const candidates = [...bundledToolCandidates('ffmpeg')];
     const wingetRoots = [
         path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages'),
         path.join(process.env.ProgramFiles || '', 'Microsoft', 'WinGet', 'Packages')
@@ -1203,7 +1221,7 @@ function nodeCommandCandidates() {
     // Put nvm paths first so a GUI launched outside the shell still finds the
     // same Node.js installation used by the user's terminal.
     const macCandidates = process.platform === 'darwin' ? macToolCandidates('node') : [];
-    return uniquePaths([...macCandidates, ...nvmNodeCandidates(), ...systemCandidates]);
+    return uniquePaths([...bundledToolCandidates('node'), ...macCandidates, ...nvmNodeCandidates(), ...systemCandidates]);
 }
 
 async function findNodeCommand(candidates = nodeCommandCandidates()) {
@@ -1235,7 +1253,9 @@ function pathCandidates(config, key, fallbackNames) {
         ? (process.platform === 'win32' ? windowsFfmpegCandidates() : macToolCandidates('ffmpeg'))
         : key === 'ytdl_path' && process.platform === 'darwin'
             ? macToolCandidates('yt-dlp')
-            : [];
+            : key === 'ytdl_path'
+                ? bundledToolCandidates('ytdlp')
+                : [];
     return [...configured, ...dynamic, ...fallbackNames].filter(Boolean).map(candidate => {
         const expanded = expandPath(candidate);
         if (expanded.includes('/') || expanded.includes('\\')) {
@@ -1248,6 +1268,7 @@ function pathCandidates(config, key, fallbackNames) {
 function browserCacheCandidates() {
     return [
         path.join(appDataDir(), 'playwright-browsers'),
+        app.isPackaged ? path.join(process.resourcesPath, 'playwright-browsers') : '',
         path.join(os.homedir(), '.cache', 'ms-playwright'),
         path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright'),
         path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright-go'),
@@ -1256,6 +1277,13 @@ function browserCacheCandidates() {
             ? process.env.PLAYWRIGHT_BROWSERS_PATH
             : ''
     ].filter(Boolean);
+}
+
+function preferredBrowserPath() {
+    const writablePath = path.join(appDataDir(), 'playwright-browsers');
+    if (hasChromiumBrowser(writablePath)) return writablePath;
+    const bundledPath = app.isPackaged ? path.join(process.resourcesPath, 'playwright-browsers') : '';
+    return hasChromiumBrowser(bundledPath) ? bundledPath : writablePath;
 }
 
 function hasChromiumBrowser(cachePath) {
@@ -1708,7 +1736,7 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
     serviceProcess = spawn(node.command || (process.platform === 'win32' ? 'node.exe' : 'node'), ['index.js', ...serviceArgs], {
         cwd: runtime,
         env: toolEnvironment({
-            PLAYWRIGHT_BROWSERS_PATH: path.join(appDataDir(), 'playwright-browsers'),
+            PLAYWRIGHT_BROWSERS_PATH: preferredBrowserPath(),
             BROWSER_TOKEN_LOGIN_HEADLESS: 'true',
             BROWSER_REDEEM_HEADLESS: 'true',
             NODE_PATH: [serviceNodePath, inheritedNodePath].filter(Boolean).join(path.delimiter)
