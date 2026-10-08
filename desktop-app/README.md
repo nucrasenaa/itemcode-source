@@ -13,6 +13,23 @@ npm start
 เมื่อเปิดครั้งแรก แอปจะตรวจสอบ Node.js, yt-dlp, FFmpeg, OCR และ Playwright Chromium
 ถ้ารายการใดยังไม่พร้อม ให้กด `Download` ที่รายการนั้น แล้วกด `ตรวจสอบอีกครั้ง`
 
+ก่อนเข้าหน้าหลัก แอปจะเปิดหน้า `Login Discord` และตรวจสอบสมาชิกกับ Discord auth
+server ที่ตั้งไว้ใน `service_config.json`:
+
+```json
+{
+  "discord_auth_server_url": "https://auth.example.com"
+}
+```
+
+โปรดดู server ตัวอย่างที่ `../discord-auth-server` สำหรับการตั้งค่า OAuth2,
+`AUTHORIZED_SERVER_IDS` และ `DISCORD_CONTACT_URL` โดยโฟลเดอร์นี้ตั้งใจให้ deploy
+แยกต่างหากและไม่ถูกรวมใน desktop build
+
+เมื่อ Login สำเร็จ desktop จะเรียก `GET /api/discord/session` และ
+`GET /api/authorized-servers` แล้วเปรียบเทียบ Server ID หากไม่ตรงกันจะแสดงปุ่ม
+`Contact me` แทนหน้าหลัก
+
 ## สร้างไฟล์ติดตั้ง
 
 ```bash

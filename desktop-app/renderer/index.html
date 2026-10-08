@@ -8,7 +8,21 @@
     <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-    <main class="shell">
+    <section class="discord-gate" id="discordGate" aria-labelledby="discordGateTitle">
+        <div class="discord-gate-card">
+            <p class="eyebrow">EQUALITY ITEMCODE WATCHER</p>
+            <h1 id="discordGateTitle">เข้าสู่ระบบด้วย Discord</h1>
+            <p class="discord-gate-note">กรุณา Login Discord เพื่อให้ระบบตรวจสอบสิทธิ์การอยู่ใน Server ที่กำหนดก่อนเข้าใช้งาน</p>
+            <div class="discord-gate-actions">
+                <button class="button button-primary" id="discordLogin" type="button">Login Discord</button>
+                <button class="button button-ghost" id="discordContact" type="button">Contact me</button>
+            </div>
+            <p class="discord-gate-status" id="discordGateStatus" role="status" aria-live="polite">กำลังเตรียม Discord auth...</p>
+            <p class="discord-gate-user" id="discordGateUser" hidden></p>
+        </div>
+    </section>
+
+    <main class="shell" id="appShell" hidden>
         <header class="topbar">
             <div>
                 <p class="eyebrow">EQUALITY ITEMCODE WATCHER</p>
