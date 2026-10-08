@@ -1,17 +1,28 @@
 const api = window.itemcodeDesktop;
 const elements = {
+    discordGate: document.getElementById('discordGate'),
+    appShell: document.getElementById('appShell'),
+    discordLogin: document.getElementById('discordLogin'),
+    discordContact: document.getElementById('discordContact'),
+    licenseCode: document.getElementById('licenseCode'),
+    activateLicense: document.getElementById('activateLicense'),
+    discordGateStatus: document.getElementById('discordGateStatus'),
+    discordGateUser: document.getElementById('discordGateUser'),
     requirementsCard: document.getElementById('requirementsCard'),
     requirementsList: document.getElementById('requirementsList'),
     requirementSummary: document.getElementById('requirementSummary'),
     repairRequirementPaths: document.getElementById('repairRequirementPaths'),
     refreshRequirements: document.getElementById('refreshRequirements'),
     workspaceCard: document.getElementById('workspaceCard'),
+    itemcodeAccountsBox: document.getElementById('itemcodeAccountsBox'),
     itemcodeAccountsList: document.getElementById('itemcodeAccountsList'),
     addItemcodeAccount: document.getElementById('addItemcodeAccount'),
     youtubeChatSettings: document.getElementById('youtubeChatSettings'),
     youtubeChatEnabled: document.getElementById('youtubeChatEnabled'),
     discordWebhookList: document.getElementById('discordWebhookList'),
     addDiscordWebhook: document.getElementById('addDiscordWebhook'),
+    telegramNotificationBox: document.getElementById('telegramNotificationBox'),
+    discordNotificationBox: document.getElementById('discordNotificationBox'),
     startStop: document.getElementById('startStop'),
     testLogin: document.getElementById('testLogin'),
     testItemcode: document.getElementById('testItemcode'),
@@ -27,6 +38,8 @@ const elements = {
     cancelItemcode: document.getElementById('cancelItemcode'),
     runState: document.getElementById('runState'),
     runStateText: document.getElementById('runStateText'),
+    licenseStatus: document.getElementById('licenseStatus'),
+    licenseDaysRemaining: document.getElementById('licenseDaysRemaining'),
     configStatus: document.getElementById('configStatus'),
     logList: document.getElementById('logList'),
     emptyLog: document.getElementById('emptyLog'),
@@ -44,6 +57,10 @@ let discordWebhooks = [{ url: '' }];
 let draggedAccountIndex = null;
 let accountOrderSaveQueue = Promise.resolve();
 let configRevision = 0;
+let discordContactUrl = '';
+let accessMode = 'none';
+let licenseExpiresAt = '';
+let licenseRemainingTimer = null;
 
 const SECTION_STATE_PREFIX = 'itemcode.desktop.section.';
 const LOG_STATUS_LABELS = {
@@ -61,6 +78,123 @@ function showToast(message, error = false) {
     elements.toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => elements.toast.classList.remove('show'), 4200);
+}
+
+function setDiscordGateStatus(message, error = false) {
+    elements.discordGateStatus.textContent = message || '';
+    elements.discordGateStatus.classList.toggle('error', error);
+}
+
+function updateLicenseRemaining() {
+    const expiresAt = new Date(licenseExpiresAt).getTime();
+    const isLicense = accessMode === 'license' && Number.isFinite(expiresAt);
+    elements.licenseStatus.hidden = !isLicense;
+    if (!isLicense) {
+        elements.licenseStatus.removeAttribute('data-expiring');
+        return;
+    }
+    const remainingMs = expiresAt - Date.now();
+    const remainingDays = Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+    elements.licenseDaysRemaining.textContent = remainingDays > 0
+        ? `License เหลือ ${remainingDays} วัน`
+        : 'License หมดอายุ';
+    elements.licenseStatus.dataset.expiring = String(remainingDays <= 1);
+    elements.licenseStatus.title = `หมดอายุ ${new Date(expiresAt).toLocaleString('th-TH')}`;
+}
+
+function syncLicenseRemaining() {
+    if (licenseRemainingTimer) clearInterval(licenseRemainingTimer);
+    licenseRemainingTimer = null;
+    updateLicenseRemaining();
+    if (accessMode === 'license' && licenseExpiresAt) {
+        licenseRemainingTimer = setInterval(updateLicenseRemaining, 24 * 60 * 60 * 1000);
+    }
+}
+
+function setDiscordAccess(authorized, user = null, mode = 'discord', nextLicenseExpiresAt = '') {
+    const hasAccess = Boolean(authorized);
+    accessMode = hasAccess ? mode : 'none';
+    licenseExpiresAt = nextLicenseExpiresAt || '';
+    syncLicenseRemaining();
+    elements.discordGate.hidden = hasAccess;
+    elements.appShell.hidden = !hasAccess;
+    const isLicense = hasAccess && accessMode === 'license';
+    elements.telegramNotificationBox.hidden = isLicense;
+    elements.discordNotificationBox.hidden = isLicense;
+    elements.addItemcodeAccount.hidden = isLicense;
+    if (isLicense) {
+        const current = readItemcodeAccounts();
+        if (current.length > 1) renderItemcodeAccounts(current.slice(0, 1));
+    }
+    if (user) {
+        const displayName = user.global_name || user.username || user.id || 'Discord user';
+        elements.discordGateUser.textContent = `Login เป็น ${displayName}`;
+        elements.discordGateUser.hidden = false;
+    } else {
+        elements.discordGateUser.hidden = true;
+    }
+}
+
+async function activateLicenseCode() {
+    const code = elements.licenseCode.value.trim();
+    if (!code) {
+        setDiscordGateStatus('กรุณากรอก License code', true);
+        return;
+    }
+    elements.activateLicense.disabled = true;
+    elements.discordLogin.disabled = true;
+    setDiscordGateStatus('กำลังตรวจสอบ License code...');
+    try {
+        const result = await api.activateLicense(code);
+        if (!result?.authorized) {
+            setDiscordAccess(false);
+            setDiscordGateStatus(result?.message || 'License code ใช้งานไม่ได้', true);
+            return;
+        }
+        setDiscordAccess(true, null, 'license', result.licenseExpiresAt);
+        setDiscordGateStatus(`License ใช้งานได้ถึง ${new Date(result.licenseExpiresAt).toLocaleString('th-TH')}`);
+        showToast('เปิดใช้งาน License สำเร็จ');
+    } catch (error) {
+        setDiscordAccess(false);
+        setDiscordGateStatus(error.message || 'ตรวจสอบ License ไม่สำเร็จ', true);
+    } finally {
+        elements.activateLicense.disabled = false;
+        elements.discordLogin.disabled = false;
+    }
+}
+
+async function openDiscordContact() {
+    try {
+        const result = await api.openDiscordContact();
+        if (!result?.ok) setDiscordGateStatus(result?.message || 'เปิด Contact ไม่สำเร็จ', true);
+    } catch (error) {
+        setDiscordGateStatus(error.message || 'เปิด Contact ไม่สำเร็จ', true);
+    }
+}
+
+async function loginWithDiscord() {
+    elements.discordLogin.disabled = true;
+    setDiscordGateStatus('กำลังเปิดหน้า Login Discord...');
+    try {
+        const result = await api.loginDiscord();
+        if (result?.contactUrl) {
+            discordContactUrl = result.contactUrl;
+            elements.discordContact.disabled = false;
+        }
+        if (result?.authorized) {
+            setDiscordAccess(true, result.user, 'discord', result.sessionExpiresAt);
+            setDiscordGateStatus(result.message || 'ตรวจสอบ Discord Server ผ่านแล้ว');
+            showToast('Login Discord สำเร็จ');
+            return;
+        }
+        setDiscordAccess(false, result?.user || null);
+        setDiscordGateStatus(result?.message || 'บัญชีนี้ไม่ได้อยู่ใน Server ที่อนุญาต', true);
+    } catch (error) {
+        setDiscordAccess(false);
+        setDiscordGateStatus(error.message || 'Login Discord ไม่สำเร็จ', true);
+    } finally {
+        elements.discordLogin.disabled = false;
+    }
 }
 
 function setUpdateState(state = {}) {
@@ -169,7 +303,8 @@ function persistItemcodeAccountOrder() {
 }
 
 function renderItemcodeAccounts(accounts = itemcodeAccounts) {
-    itemcodeAccounts = accounts.length > 0 ? accounts : [{ username: '', password: '' }];
+    const limitedAccounts = accessMode === 'license' ? accounts.slice(0, 1) : accounts;
+    itemcodeAccounts = limitedAccounts.length > 0 ? limitedAccounts : [{ username: '', password: '' }];
     elements.itemcodeAccountsList.replaceChildren();
 
     itemcodeAccounts.forEach((account, index) => {
@@ -183,9 +318,9 @@ function renderItemcodeAccounts(accounts = itemcodeAccounts) {
         dragHandle.textContent = '⋮⋮';
         dragHandle.title = 'ลากเพื่อเปลี่ยนลำดับบัญชี';
         dragHandle.setAttribute('aria-label', `ลากเพื่อเปลี่ยนลำดับบัญชีที่ ${index + 1}`);
-        dragHandle.draggable = !running;
+        dragHandle.draggable = !running && accessMode !== 'license';
         dragHandle.addEventListener('dragstart', event => {
-            if (running) {
+            if (running || accessMode === 'license') {
                 event.preventDefault();
                 return;
             }
@@ -197,7 +332,7 @@ function renderItemcodeAccounts(accounts = itemcodeAccounts) {
         dragHandle.addEventListener('dragend', clearAccountDragState);
 
         row.addEventListener('dragover', event => {
-            if (running || draggedAccountIndex === null) return;
+            if (running || accessMode === 'license' || draggedAccountIndex === null) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
             const midpoint = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
@@ -210,7 +345,7 @@ function renderItemcodeAccounts(accounts = itemcodeAccounts) {
             }
         });
         row.addEventListener('drop', event => {
-            if (running || draggedAccountIndex === null) return;
+            if (running || accessMode === 'license' || draggedAccountIndex === null) return;
             event.preventDefault();
             const midpoint = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2;
             const fromIndex = draggedAccountIndex;
@@ -263,7 +398,7 @@ function renderItemcodeAccounts(accounts = itemcodeAccounts) {
         remove.type = 'button';
         remove.className = 'button button-ghost remove-account';
         remove.textContent = 'ลบ';
-        remove.disabled = itemcodeAccounts.length <= 1;
+        remove.disabled = accessMode === 'license' || itemcodeAccounts.length <= 1;
         remove.addEventListener('click', () => {
             if (readItemcodeAccounts().length <= 1) return;
             const next = readItemcodeAccounts();
@@ -275,7 +410,7 @@ function renderItemcodeAccounts(accounts = itemcodeAccounts) {
         row.append(dragHandle, order, usernameField, passwordField, remove);
         elements.itemcodeAccountsList.append(row);
     });
-    elements.addItemcodeAccount.disabled = running;
+    elements.addItemcodeAccount.disabled = running || accessMode === 'license';
 }
 
 function clearAccountDragState() {
@@ -355,7 +490,7 @@ function renderDiscordWebhooks(webhooks = discordWebhooks) {
 }
 
 function inputValues() {
-    const accounts = readItemcodeAccounts();
+    const accounts = accessMode === 'license' ? readItemcodeAccounts().slice(0, 1) : readItemcodeAccounts();
     const firstAccount = accounts.find(account => account.username.trim() && account.password) || {};
     const webhookUrls = readDiscordWebhooks();
     return {
@@ -367,11 +502,11 @@ function inputValues() {
         password2: firstAccount.password || '',
         telegramToken: document.getElementById('telegramToken').value,
         telegramChatId: document.getElementById('telegramChatId').value,
-        telegramEnabled: document.getElementById('telegramEnabled').checked,
+        telegramEnabled: accessMode !== 'license' && document.getElementById('telegramEnabled').checked,
         browserRedeemMaxAttempts: Number(document.getElementById('browserRedeemMaxAttempts').value),
         youtubeChatEnabled: elements.youtubeChatEnabled.checked,
-        discordWebhookUrls: webhookUrls,
-        discordEnabled: document.getElementById('discordEnabled').checked
+        discordWebhookUrls: accessMode === 'license' ? [] : webhookUrls,
+        discordEnabled: accessMode !== 'license' && document.getElementById('discordEnabled').checked
     };
 }
 
@@ -407,19 +542,19 @@ function setRunning(value, mode = 'running') {
     elements.startStop.classList.toggle('button-primary', !running);
     elements.testLogin.disabled = running;
     elements.testItemcode.disabled = running;
-    elements.testTelegram.disabled = running;
-    elements.testDiscord.disabled = running;
-    elements.addItemcodeAccount.disabled = running;
+    elements.testTelegram.disabled = running || accessMode === 'license';
+    elements.testDiscord.disabled = running || accessMode === 'license';
+    elements.addItemcodeAccount.disabled = running || accessMode === 'license';
     elements.addDiscordWebhook.disabled = running;
     for (const button of document.querySelectorAll('.remove-account')) {
-        button.disabled = running || elements.itemcodeAccountsList.querySelectorAll('.itemcode-account-row').length <= 1;
+        button.disabled = running || accessMode === 'license' || elements.itemcodeAccountsList.querySelectorAll('.itemcode-account-row').length <= 1;
     }
     for (const button of document.querySelectorAll('.remove-webhook')) {
         button.disabled = running || elements.discordWebhookList.querySelectorAll('.discord-webhook-row').length <= 1;
     }
     for (const handle of document.querySelectorAll('.account-drag-handle')) {
-        handle.draggable = !running;
-        handle.setAttribute('aria-disabled', String(running));
+        handle.draggable = !running && accessMode !== 'license';
+        handle.setAttribute('aria-disabled', String(running || accessMode === 'license'));
     }
     for (const input of document.querySelectorAll('.field input, .switch-label input')) input.disabled = running;
 }
@@ -774,6 +909,12 @@ elements.cancelItemcode.addEventListener('click', closeItemcodeModal);
 document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !elements.changelogModal.hidden) closeChangelog();
 });
+elements.discordLogin.addEventListener('click', loginWithDiscord);
+elements.discordContact.addEventListener('click', openDiscordContact);
+elements.activateLicense.addEventListener('click', activateLicenseCode);
+elements.licenseCode.addEventListener('keydown', event => {
+    if (event.key === 'Enter') activateLicenseCode();
+});
 for (const button of document.querySelectorAll('.collapse-toggle')) {
     button.addEventListener('click', () => toggleSection(button));
 }
@@ -812,6 +953,15 @@ api.onServiceState(state => {
     }
 });
 api.onItemcodeEvent(addItemcodeEvent);
+api.onServiceLog(addServiceLog);
+api.onDiscordAuthState(state => {
+    if (!state?.authorized) {
+        setDiscordAccess(false);
+        setDiscordGateStatus(state?.message || 'Session หมดอายุ กรุณา Login ใหม่', true);
+        return;
+    }
+    setDiscordAccess(true, state.user, state.mode, state.licenseExpiresAt);
+});
 api.onUpdateState(setUpdateState);
 api.onUpdateNotification(notification => {
     if (notification?.body) showToast(`${notification.title ? `${notification.title}: ` : ''}${notification.body}`);
@@ -826,11 +976,21 @@ api.onRequirementsUpdate(next => {
 
 (async function init() {
     try {
-        const [settings, state, update] = await Promise.all([
+        const [discordConfig, discordState, settings, state, update] = await Promise.all([
+            api.getDiscordConfig(),
+            api.getDiscordAuthState(),
             api.loadSettings(),
             api.getServiceState(),
             api.getUpdateStatus()
         ]);
+        discordContactUrl = discordConfig?.contactUrl || '';
+        elements.discordContact.disabled = !discordContactUrl;
+        if (!discordConfig?.ok) {
+            setDiscordGateStatus(discordConfig?.message || 'ยังเชื่อมต่อ Discord auth server ไม่ได้', true);
+        } else {
+            setDiscordGateStatus('พร้อม Login Discord');
+        }
+        setDiscordAccess(discordState?.authorized, discordState?.user, discordState?.mode, discordState?.licenseExpiresAt);
         setInputs(settings);
         setRunning(state.running, state.mode);
         setUpdateState(update);

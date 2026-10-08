@@ -4,11 +4,13 @@ const {
     dialog,
     ipcMain,
     shell,
-    Notification
+    Notification,
+    safeStorage
 } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const crypto = require('crypto');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
@@ -45,6 +47,19 @@ let macUpdateAvailable = false;
 let macUpdateDownloadInFlight = false;
 let macUpdatePath = '';
 let updateInstallInFlight = false;
+let discordAuthState = {
+    authenticated: false,
+    authorized: false,
+    mode: 'none',
+    user: null,
+    matchedServerId: '',
+    expiresAt: '',
+    licenseExpiresAt: '',
+    message: 'กรุณา Login ด้วย Discord ก่อนใช้งาน'
+};
+let discordLoginInFlight = null;
+let authSession = null;
+let authHeartbeatTimer = null;
 
 // Download updates automatically, then let the user choose when to restart.
 // autoInstallOnAppQuit also covers the case where the user closes the app
@@ -490,6 +505,22 @@ function applyDiscordWebhooks(config, source) {
     return urls;
 }
 
+function settingsForCurrentAccess(settings = {}) {
+    if (discordAuthState.mode !== 'license') return settings;
+    const accounts = normalizeItemcodeAccounts(settings).slice(0, 1);
+    return {
+        ...settings,
+        itemcodeAccounts: accounts,
+        username2: accounts[0]?.username || '',
+        password2: accounts[0]?.password || '',
+        telegramToken: '',
+        telegramChatId: '',
+        telegramEnabled: false,
+        discordWebhookUrls: [],
+        discordEnabled: false
+    };
+}
+
 function ensureRuntimeDirectory() {
     if (!app.isPackaged) return SERVICE_SOURCE_DIR;
 
@@ -528,6 +559,11 @@ function ensureRuntimeDirectory() {
             fs.copyFileSync(from, path.join(target, file));
         }
     }
+    const bundledModules = path.join(source, 'node_modules');
+    const runtimePlaywright = path.join(target, 'node_modules', 'playwright');
+    if (fs.existsSync(path.join(bundledModules, 'playwright')) && !fs.existsSync(runtimePlaywright)) {
+        fs.cpSync(bundledModules, path.join(target, 'node_modules'), { recursive: true });
+    }
     if (process.platform === 'darwin') {
         const ocrHelper = path.join(target, 'ocr_helper');
         if (fs.existsSync(ocrHelper)) fs.chmodSync(ocrHelper, 0o755);
@@ -557,6 +593,8 @@ function readConfig() {
                     discord_webhook_url: [],
                     discord_webhook_urls: [],
                     discord_enabled: false,
+                    discord_auth_server_url: 'https://equalityitemcode.threemandev.com',
+                    discord_contact_url: '',
                     browser_redeem_enabled: true,
                     browser_redeem_headless: true,
                     browser_token_login_enabled: true,
@@ -567,6 +605,364 @@ function readConfig() {
         return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8')));
     } catch (error) {
         throw new Error(`อ่าน service_config.json ไม่สำเร็จ: ${error.message}`);
+    }
+}
+
+function discordAuthServerUrl(config = {}) {
+    const configured = process.env.DISCORD_AUTH_SERVER_URL
+        || (!app.isPackaged && config.discord_auth_server_url)
+        || 'https://equalityitemcode.threemandev.com';
+    const parsed = new URL(String(configured));
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('DISCORD_AUTH_SERVER_URL ต้องเป็น http:// หรือ https://');
+    }
+    return parsed.toString().replace(/\/$/, '');
+}
+
+function safeDiscordContactUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''));
+        if (['https:', 'discord:'].includes(parsed.protocol)) return parsed.toString();
+    } catch (error) {
+        // Invalid or empty contact URLs are treated as unavailable.
+    }
+    return '';
+}
+
+async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {
+        ...options,
+        headers: {
+            Accept: 'application/json',
+            ...(options.headers || {})
+        }
+    });
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = null;
+    }
+    if (!response.ok) {
+        throw new Error(payload?.message || `Auth server returned HTTP ${response.status}`);
+    }
+    return payload || {};
+}
+
+async function loadDiscordPublicConfig() {
+    const config = readConfig();
+    const fallback = safeDiscordContactUrl(config.discord_contact_url);
+    try {
+        const baseUrl = discordAuthServerUrl(config);
+        const payload = await fetchJson(`${baseUrl}/api/public-config`);
+        return {
+            ok: true,
+            contactUrl: safeDiscordContactUrl(payload.contactUrl) || fallback,
+            authServerUrl: baseUrl,
+            discordSessionDays: Number(payload.discordSessionDays) || 30,
+            licenseDurations: Array.isArray(payload.licenseDurations) ? payload.licenseDurations : [3, 7, 30]
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            contactUrl: fallback,
+            message: `เชื่อมต่อ Discord auth server ไม่ได้: ${error.message}`
+        };
+    }
+}
+
+function authSessionPath() {
+    return path.join(app.getPath('userData'), 'discord-auth-session.bin');
+}
+
+function clientIdPath() {
+    return path.join(app.getPath('userData'), 'discord-auth-client-id');
+}
+
+function readClientId() {
+    try {
+        const existing = fs.readFileSync(clientIdPath(), 'utf8').trim();
+        if (existing) return existing;
+    } catch (error) {
+        // Generate an ID below when this is the first launch.
+    }
+    const generated = crypto.randomUUID();
+    fs.mkdirSync(path.dirname(clientIdPath()), { recursive: true });
+    fs.writeFileSync(clientIdPath(), generated, 'utf8');
+    return generated;
+}
+
+function saveAuthSession(session) {
+    authSession = {
+        token: String(session.token || ''),
+        mode: session.mode || 'discord',
+        user: session.user || null,
+        expiresAt: session.expiresAt || session.sessionExpiresAt || '',
+        licenseExpiresAt: session.licenseExpiresAt || ''
+    };
+    const raw = JSON.stringify(authSession);
+    const stored = safeStorage.isEncryptionAvailable()
+        ? `encrypted:${safeStorage.encryptString(raw).toString('base64')}`
+        : `plain:${raw}`;
+    fs.mkdirSync(path.dirname(authSessionPath()), { recursive: true });
+    fs.writeFileSync(authSessionPath(), stored, 'utf8');
+    discordAuthState = {
+        authenticated: true,
+        authorized: true,
+        mode: authSession.mode,
+        user: authSession.user,
+        matchedServerId: '',
+        expiresAt: authSession.expiresAt,
+        licenseExpiresAt: authSession.licenseExpiresAt,
+        message: authSession.mode === 'license' ? 'License ใช้งานได้' : 'ตรวจสอบ Discord Server ผ่านแล้ว'
+    };
+    startAuthHeartbeat();
+    return { ...discordAuthState };
+}
+
+function readAuthSession() {
+    try {
+        const stored = fs.readFileSync(authSessionPath(), 'utf8');
+        if (stored.startsWith('encrypted:')) {
+            if (!safeStorage.isEncryptionAvailable()) return null;
+            return JSON.parse(safeStorage.decryptString(Buffer.from(stored.slice(10), 'base64')));
+        }
+        if (stored.startsWith('plain:')) return JSON.parse(stored.slice(6));
+    } catch (error) {
+        // Missing, corrupted, or unavailable session is treated as logged out.
+    }
+    return null;
+}
+
+function clearAuthSession(message = 'กรุณา Login ด้วย Discord หรือ License code ก่อนใช้งาน') {
+    authSession = null;
+    try { fs.rmSync(authSessionPath(), { force: true }); } catch (error) { /* best effort */ }
+    if (authHeartbeatTimer) clearInterval(authHeartbeatTimer);
+    authHeartbeatTimer = null;
+    discordAuthState = {
+        authenticated: false,
+        authorized: false,
+        mode: 'none',
+        user: null,
+        matchedServerId: '',
+        expiresAt: '',
+        licenseExpiresAt: '',
+        message
+    };
+    return { ...discordAuthState };
+}
+
+function startAuthHeartbeat() {
+    if (authHeartbeatTimer) clearInterval(authHeartbeatTimer);
+    authHeartbeatTimer = setInterval(() => heartbeatAuthSession(), 60 * 1000);
+    authHeartbeatTimer.unref?.();
+}
+
+async function heartbeatAuthSession() {
+    if (!authSession?.token) return;
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        await fetchJson(`${baseUrl}/api/session/heartbeat`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${authSession.token}` }
+        });
+    } catch (error) {
+        if (/401|หมดอายุ|invalid/i.test(error.message)) {
+            clearAuthSession('Session หมดอายุ กรุณา Login ใหม่');
+            send('discord:auth-state', { ...discordAuthState });
+        }
+    }
+}
+
+async function restoreAuthSession() {
+    if (authSession?.token) return { ...discordAuthState };
+    const stored = readAuthSession();
+    if (!stored?.token) return { ...discordAuthState };
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        const payload = await fetchJson(`${baseUrl}/api/session/validate`, {
+            headers: { Authorization: `Bearer ${stored.token}` }
+        });
+        authSession = { ...stored, ...payload, token: stored.token, expiresAt: payload.expiresAt || stored.expiresAt };
+        discordAuthState = {
+            authenticated: true,
+            authorized: true,
+            mode: payload.mode || stored.mode || 'discord',
+            user: payload.user || stored.user || null,
+            matchedServerId: '',
+            expiresAt: payload.expiresAt || stored.expiresAt || '',
+            licenseExpiresAt: payload.licenseExpiresAt || stored.licenseExpiresAt || '',
+            message: payload.mode === 'license' ? 'License ใช้งานได้' : 'Session Discord ยังใช้งานได้'
+        };
+        startAuthHeartbeat();
+    } catch (error) {
+        clearAuthSession('Session หมดอายุ กรุณา Login ใหม่');
+    }
+    return { ...discordAuthState };
+}
+
+async function loginDiscord() {
+    if (discordLoginInFlight) return discordLoginInFlight;
+    discordLoginInFlight = (async () => {
+        discordAuthState = {
+            ...discordAuthState,
+            message: 'กำลังเปิดหน้า Login Discord...'
+        };
+        try {
+            const expectedState = crypto.randomBytes(24).toString('hex');
+            // The callback server chooses a random port, so create a small
+            // wrapper to let it return the final URL to the auth server.
+            const callbackResult = await new Promise((resolve, reject) => {
+                let settled = false;
+                let callbackServer;
+                const timeout = setTimeout(() => finish(new Error('หมดเวลารอการ Login Discord')), 5 * 60 * 1000);
+                const finish = (error, result) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    if (callbackServer) callbackServer.close();
+                    if (error) reject(error);
+                    else resolve(result);
+                };
+                callbackServer = http.createServer((request, response) => {
+                    try {
+                        const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
+                        if (requestUrl.pathname !== '/callback') {
+                            response.writeHead(404);
+                            response.end('Not found');
+                            return;
+                        }
+                        if (requestUrl.searchParams.get('state') !== expectedState) {
+                            response.writeHead(400);
+                            response.end('Invalid OAuth state');
+                            finish(new Error('ตรวจสอบ OAuth state ไม่ผ่าน'));
+                            return;
+                        }
+                        const errorCode = requestUrl.searchParams.get('error');
+                        if (errorCode) {
+                            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                            response.end('<!doctype html><title>Discord Login</title><p>ยกเลิกหรือ Login Discord ไม่สำเร็จ สามารถกลับไปที่แอปได้</p>');
+                            finish(new Error(requestUrl.searchParams.get('message') || `Discord OAuth error: ${errorCode}`));
+                            return;
+                        }
+                        const ticket = requestUrl.searchParams.get('ticket');
+                        if (!ticket) {
+                            response.writeHead(400);
+                            response.end('Missing login ticket');
+                            finish(new Error('Auth server ไม่ได้ส่ง login ticket กลับมา'));
+                            return;
+                        }
+                        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        response.end('<!doctype html><title>Discord Login</title><p>Login สำเร็จแล้ว ปิดหน้านี้และกลับไปที่ ItemCode Watcher ได้</p>');
+                        finish(null, { ticket });
+                    } catch (error) {
+                        response.writeHead(500);
+                        response.end('OAuth callback error');
+                        finish(error);
+                    }
+                });
+                callbackServer.once('error', finish);
+                callbackServer.listen(0, '127.0.0.1', async () => {
+                    try {
+                        const address = callbackServer.address();
+                        const localCallback = `http://127.0.0.1:${address.port}/callback`;
+                        const baseUrl = discordAuthServerUrl(readConfig());
+                        const loginUrl = new URL(`${baseUrl}/auth/discord/start`);
+                        loginUrl.searchParams.set('state', expectedState);
+                        loginUrl.searchParams.set('callback', localCallback);
+                        loginUrl.searchParams.set('client_id', readClientId());
+                        await shell.openExternal(loginUrl.toString());
+                    } catch (error) {
+                        finish(error);
+                    }
+                });
+            });
+
+            const config = readConfig();
+            const baseUrl = discordAuthServerUrl(config);
+            const session = await fetchJson(`${baseUrl}/api/discord/session?ticket=${encodeURIComponent(callbackResult.ticket)}`);
+            const allowlist = await fetchJson(`${baseUrl}/api/authorized-servers`);
+            const guildIds = new Set((session.guildIds || []).map(id => String(id)));
+            const serverIds = Array.isArray(allowlist.serverIds)
+                ? allowlist.serverIds.map(id => String(id))
+                : [];
+            const matchedServerId = serverIds.find(id => guildIds.has(id)) || session.matchedServerId || '';
+            const authorized = Boolean(session.authorized && matchedServerId);
+            const contactConfig = await loadDiscordPublicConfig();
+            if (authorized && session.sessionToken) {
+                saveAuthSession({
+                    token: session.sessionToken,
+                    mode: 'discord',
+                    user: session.user || null,
+                    expiresAt: session.sessionExpiresAt || '',
+                    licenseExpiresAt: ''
+                });
+                discordAuthState.matchedServerId = matchedServerId;
+            } else {
+                clearAuthSession('บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต');
+                discordAuthState.user = session.user || null;
+            }
+            return {
+                ok: true,
+                authorized,
+                mode: 'discord',
+                user: session.user || null,
+                matchedServerId,
+                contactUrl: contactConfig.contactUrl,
+                sessionExpiresAt: session.sessionExpiresAt || '',
+                message: authorized
+                    ? 'ตรวจสอบ Discord Server ผ่านแล้ว'
+                    : 'บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต'
+            };
+        } catch (error) {
+            discordAuthState = {
+                authenticated: false,
+                authorized: false,
+                mode: 'none',
+                user: null,
+                matchedServerId: '',
+                expiresAt: '',
+                licenseExpiresAt: '',
+                message: error.message
+            };
+            return { ok: false, authorized: false, message: error.message };
+        } finally {
+            discordLoginInFlight = null;
+        }
+    })();
+    return discordLoginInFlight;
+}
+
+async function activateLicense(code) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (!normalizedCode) return { ok: false, authorized: false, message: 'กรุณากรอก License code' };
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        const result = await fetchJson(`${baseUrl}/api/license/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: normalizedCode, clientId: readClientId() })
+        });
+        if (!result.authorized || !result.sessionToken) {
+            return { ok: false, authorized: false, message: result.message || 'License code ใช้งานไม่ได้' };
+        }
+        saveAuthSession({
+            token: result.sessionToken,
+            mode: 'license',
+            user: null,
+            expiresAt: result.sessionExpiresAt || result.licenseExpiresAt,
+            licenseExpiresAt: result.licenseExpiresAt || result.sessionExpiresAt
+        });
+        return {
+            ok: true,
+            authorized: true,
+            mode: 'license',
+            licenseExpiresAt: result.licenseExpiresAt || '',
+            sessionExpiresAt: result.sessionExpiresAt || '',
+            message: 'License code ใช้งานได้'
+        };
+    } catch (error) {
+        return { ok: false, authorized: false, message: error.message };
     }
 }
 
@@ -608,6 +1004,17 @@ async function findWorkingCommand(candidates, args = ['--version']) {
 
 function uniquePaths(values) {
     return [...new Set(values.filter(Boolean))];
+}
+
+function bundledToolCandidates(tool) {
+    if (!app.isPackaged || !['win32', 'darwin'].includes(process.platform)) return [];
+    const executable = process.platform === 'win32'
+        ? (tool === 'node' ? 'node.exe' : tool === 'ffmpeg' ? 'ffmpeg.exe' : 'yt-dlp.exe')
+        : (tool === 'node' ? 'node' : tool === 'ffmpeg' ? 'ffmpeg' : 'yt-dlp');
+    return [
+        path.join(process.resourcesPath, 'tools', tool, executable),
+        path.join(process.resourcesPath, 'tools', executable)
+    ];
 }
 
 function childDirectoryNames(root) {
@@ -685,7 +1092,10 @@ function macHomebrewFormulaCandidates(formula, binary) {
 function macToolCandidates(tool) {
     if (process.platform !== 'darwin') return [];
     const home = os.homedir();
-    const candidates = macExecutableDirectories().map(directory => path.join(directory, tool));
+    const candidates = [
+        ...bundledToolCandidates(tool === 'yt-dlp' ? 'ytdlp' : tool),
+        ...macExecutableDirectories().map(directory => path.join(directory, tool))
+    ];
 
     if (tool === 'node') {
         candidates.push(
@@ -748,7 +1158,7 @@ function toolEnvironment(overrides = {}) {
 function windowsFfmpegCandidates() {
     if (process.platform !== 'win32') return [];
 
-    const candidates = [];
+    const candidates = [...bundledToolCandidates('ffmpeg')];
     const wingetRoots = [
         path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages'),
         path.join(process.env.ProgramFiles || '', 'Microsoft', 'WinGet', 'Packages')
@@ -814,7 +1224,7 @@ function nodeCommandCandidates() {
     // Put nvm paths first so a GUI launched outside the shell still finds the
     // same Node.js installation used by the user's terminal.
     const macCandidates = process.platform === 'darwin' ? macToolCandidates('node') : [];
-    return uniquePaths([...macCandidates, ...nvmNodeCandidates(), ...systemCandidates]);
+    return uniquePaths([...bundledToolCandidates('node'), ...macCandidates, ...nvmNodeCandidates(), ...systemCandidates]);
 }
 
 async function findNodeCommand(candidates = nodeCommandCandidates()) {
@@ -846,7 +1256,9 @@ function pathCandidates(config, key, fallbackNames) {
         ? (process.platform === 'win32' ? windowsFfmpegCandidates() : macToolCandidates('ffmpeg'))
         : key === 'ytdl_path' && process.platform === 'darwin'
             ? macToolCandidates('yt-dlp')
-            : [];
+            : key === 'ytdl_path'
+                ? bundledToolCandidates('ytdlp')
+                : [];
     return [...configured, ...dynamic, ...fallbackNames].filter(Boolean).map(candidate => {
         const expanded = expandPath(candidate);
         if (expanded.includes('/') || expanded.includes('\\')) {
@@ -859,6 +1271,7 @@ function pathCandidates(config, key, fallbackNames) {
 function browserCacheCandidates() {
     return [
         path.join(appDataDir(), 'playwright-browsers'),
+        app.isPackaged ? path.join(process.resourcesPath, 'playwright-browsers') : '',
         path.join(os.homedir(), '.cache', 'ms-playwright'),
         path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright'),
         path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright-go'),
@@ -867,6 +1280,13 @@ function browserCacheCandidates() {
             ? process.env.PLAYWRIGHT_BROWSERS_PATH
             : ''
     ].filter(Boolean);
+}
+
+function preferredBrowserPath() {
+    const writablePath = path.join(appDataDir(), 'playwright-browsers');
+    if (hasChromiumBrowser(writablePath)) return writablePath;
+    const bundledPath = app.isPackaged ? path.join(process.resourcesPath, 'playwright-browsers') : '';
+    return hasChromiumBrowser(bundledPath) ? bundledPath : writablePath;
 }
 
 function hasChromiumBrowser(cachePath) {
@@ -1267,6 +1687,7 @@ function consumeServiceOutput(chunk, bufferName) {
 
 async function startService(settings, serviceArgs = [], mode = 'running') {
     if (serviceProcess) return { running: true };
+    settings = settingsForCurrentAccess(settings);
     const runtime = ensureRuntimeDirectory();
     const config = readConfig();
     const itemcodeAccounts = normalizeItemcodeAccounts(settings);
@@ -1318,7 +1739,7 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
     serviceProcess = spawn(node.command || (process.platform === 'win32' ? 'node.exe' : 'node'), ['index.js', ...serviceArgs], {
         cwd: runtime,
         env: toolEnvironment({
-            PLAYWRIGHT_BROWSERS_PATH: path.join(appDataDir(), 'playwright-browsers'),
+            PLAYWRIGHT_BROWSERS_PATH: preferredBrowserPath(),
             BROWSER_TOKEN_LOGIN_HEADLESS: 'true',
             BROWSER_REDEEM_HEADLESS: 'true',
             NODE_PATH: [serviceNodePath, inheritedNodePath].filter(Boolean).join(path.delimiter)
@@ -1443,7 +1864,8 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: true
+            sandbox: true,
+            devTools: false
         }
     });
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -1482,7 +1904,31 @@ ipcMain.handle('settings:save-redeem-attempts', (_event, value) => {
     const config = readConfig();
     config.browser_redeem_max_attempts = value;
     writeConfig(config);
+});
+ipcMain.handle('discord:config', () => loadDiscordPublicConfig());
+ipcMain.handle('discord:auth-state', () => restoreAuthSession());
+ipcMain.handle('discord:login', () => loginDiscord());
+ipcMain.handle('discord:contact', async () => {
+    const publicConfig = await loadDiscordPublicConfig();
+    if (!publicConfig.contactUrl) {
+        return { ok: false, message: 'ยังไม่ได้ตั้งค่า DISCORD_CONTACT_URL ใน auth server' };
+    }
+    await shell.openExternal(publicConfig.contactUrl);
     return { ok: true };
+});
+ipcMain.handle('discord:logout', async () => {
+    try {
+        if (authSession?.token) {
+            const baseUrl = discordAuthServerUrl(readConfig());
+            await fetchJson(`${baseUrl}/api/session/logout`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${authSession.token}` }
+            });
+        }
+    } catch (error) {
+        // Local logout must still finish if the auth server is unavailable.
+    }
+    return { ok: true, ...clearAuthSession() };
 });
 ipcMain.handle('settings:load', () => {
     const config = readConfig();
@@ -1503,6 +1949,7 @@ ipcMain.handle('settings:load', () => {
     };
 });
 ipcMain.handle('settings:save', (_event, settings) => {
+    settings = settingsForCurrentAccess(settings);
     const config = readConfig();
     const itemcodeAccounts = normalizeItemcodeAccounts(settings);
     applyItemcodeAccounts(config, { itemcodeAccounts });
@@ -1521,7 +1968,8 @@ ipcMain.handle('settings:save', (_event, settings) => {
     return { ok: true };
 });
 ipcMain.handle('settings:save-itemcode-account-order', (_event, accounts) => {
-    const rawAccounts = Array.isArray(accounts) ? accounts : [];
+    let rawAccounts = Array.isArray(accounts) ? accounts : [];
+    if (discordAuthState.mode === 'license') rawAccounts = rawAccounts.slice(0, 1);
     const itemcodeAccounts = normalizeItemcodeAccounts({ itemcodeAccounts: rawAccounts });
     if (itemcodeAccounts.length !== rawAccounts.length) {
         return { ok: false, message: 'บันทึกลำดับไม่ได้ กรุณากรอก username/password ของทุกบัญชีให้ครบ' };
@@ -1538,8 +1986,14 @@ ipcMain.handle('service:test-itemcode', (_event, payload) => {
     if (!code) throw new Error('กรุณากรอก ItemCode สำหรับทดสอบ');
     return startService(payload?.settings || {}, ['--test-browser-redeem', code], 'test-itemcode');
 });
-ipcMain.handle('telegram:test', (_event, settings) => testTelegram(settings));
-ipcMain.handle('discord:test', (_event, settings) => testDiscord(settings));
+ipcMain.handle('license:activate', (_event, code) => activateLicense(code));
+ipcMain.handle('discord:heartbeat', () => heartbeatAuthSession().then(() => ({ ...discordAuthState })));
+ipcMain.handle('telegram:test', (_event, settings) => discordAuthState.mode === 'license'
+    ? { ok: false, message: 'License code ไม่รองรับ Telegram Notification' }
+    : testTelegram(settings));
+ipcMain.handle('discord:test', (_event, settings) => discordAuthState.mode === 'license'
+    ? { ok: false, message: 'License code ไม่รองรับ Discord Notification' }
+    : testDiscord(settings));
 ipcMain.handle('service:stop', () => stopService());
 ipcMain.handle('service:state', () => ({ running: Boolean(serviceProcess), mode: serviceMode }));
 ipcMain.handle('update:status', () => updatePayload());

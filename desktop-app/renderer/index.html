@@ -8,7 +8,28 @@
     <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-    <main class="shell">
+    <section class="discord-gate" id="discordGate" aria-labelledby="discordGateTitle">
+        <div class="discord-gate-card">
+            <p class="eyebrow">EQUALITY ITEMCODE WATCHER</p>
+            <h1 id="discordGateTitle">เข้าสู่ระบบด้วย Discord</h1>
+            <p class="discord-gate-note">กรุณา Login Discord เพื่อให้ระบบตรวจสอบสิทธิ์การอยู่ใน Server ที่กำหนดก่อนเข้าใช้งาน</p>
+            <div class="discord-gate-actions">
+                <button class="button button-primary" id="discordLogin" type="button">Login Discord</button>
+                <button class="button button-ghost" id="discordContact" type="button">Contact me</button>
+            </div>
+            <div class="license-gate-form">
+                <div class="license-divider"><span>หรือใช้ License Code</span></div>
+                <div class="license-gate-input-row">
+                    <input id="licenseCode" type="text" autocomplete="off" placeholder="เช่น ITEM-XXXXX-XXXXX" />
+                    <button class="button button-ghost" id="activateLicense" type="button">Activate</button>
+                </div>
+            </div>
+            <p class="discord-gate-status" id="discordGateStatus" role="status" aria-live="polite">กำลังเตรียม Discord auth...</p>
+            <p class="discord-gate-user" id="discordGateUser" hidden></p>
+        </div>
+    </section>
+
+    <main class="shell" id="appShell" hidden>
         <header class="topbar">
             <div>
                 <p class="eyebrow">EQUALITY ITEMCODE WATCHER</p>
@@ -20,6 +41,10 @@
                 <div class="run-state" id="runState" data-running="false">
                     <span class="state-dot"></span>
                     <span id="runStateText">หยุดทำงาน</span>
+                </div>
+                <div class="license-status" id="licenseStatus" hidden>
+                    <span class="license-status-dot"></span>
+                    <strong id="licenseDaysRemaining">License เหลือ -- วัน</strong>
                 </div>
                 <button class="button button-ghost" id="checkUpdate" type="button">ตรวจสอบ Update</button>
                 <button class="button button-ghost" id="openChangelog" type="button">Changelog ภาษาไทย</button>
@@ -67,7 +92,7 @@
                     <input id="password" autocomplete="current-password" type="password" placeholder="กรอก password" />
                 </label>
               </div>
-              <div class="itemcode-accounts-box">
+              <div class="itemcode-accounts-box" id="itemcodeAccountsBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">บัญชีสำหรับรับ ItemCode</span>
@@ -96,7 +121,7 @@
                 </div>
                 <p class="youtube-chat-warning">ไม่ต้องใช้ API Key; ตัวอ่านแชตเป็นไลบรารีไม่เป็นทางการและอาจหยุดทำงานเมื่อ YouTube เปลี่ยนระบบ</p>
               </div>
-              <div class="telegram-box">
+              <div class="telegram-box" id="telegramNotificationBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">Telegram Notification</span>
@@ -119,7 +144,7 @@
                     </label>
                 </div>
               </div>
-              <div class="discord-box">
+              <div class="discord-box" id="discordNotificationBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">Discord Notification</span>
@@ -202,6 +227,15 @@
                     <button class="button button-ghost" id="closeChangelog" type="button">ปิด</button>
                 </div>
                 <div class="changelog-list">
+                    <article class="changelog-entry">
+                        <div class="changelog-version">เวอร์ชัน 3.0.0 (macOS / Windows)</div>
+                        <ul>
+                            <li>เพิ่ม Discord Sign-in และ Activate License code ก่อนเข้าสู่หน้าหลัก</li>
+                            <li>Discord session อยู่ได้ 30 วัน และ License แสดงจำนวนวันที่เหลือพร้อมจำกัดบัญชีรับ ItemCode 1 บัญชี</li>
+                            <li>ซ่อน Telegram/Discord Notification สำหรับผู้ใช้ License code</li>
+                            <li>รวม Node.js, FFmpeg, yt-dlp และ Playwright Chromium ไว้ในตัวติดตั้ง</li>
+                        </ul>
+                    </article>
                     <article class="changelog-entry">
                         <div class="changelog-version">เวอร์ชัน 0.2.12 (macOS / Windows)</div>
                         <ul>

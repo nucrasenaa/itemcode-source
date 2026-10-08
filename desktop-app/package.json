@@ -1,50 +1,68 @@
 {
   "name": "itemcode-desktop",
-  "version": "0.2.14",
+  "version": "3.0.0",
   "description": "Cross-platform desktop UI for equality-itemcode-version",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check renderer/renderer.js",
-    "dist": "electron-builder"
+    "prepare:protected": "node scripts/prepare-protected-runtime.cjs",
+    "prepare:bundled": "node scripts/prepare-bundled-runtime.cjs",
+    "dist": "electron-builder",
+    "dist:release": "node scripts/release-build.cjs"
   },
   "devDependencies": {
     "electron": "^38.0.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "javascript-obfuscator": "^4.1.1"
   },
   "build": {
     "appId": "local.itemcode.desktop",
     "productName": "Equality ItemCode Watcher",
+    "asar": true,
+    "removePackageScripts": true,
+    "removePackageKeywords": true,
+    "includePdb": false,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
     "files": [
-      "main.js",
-      "preload.js",
-      "renderer/**/*",
-      "package.json"
+      {
+        "from": ".protected-app",
+        "to": ".",
+        "filter": [
+          "**/*",
+          "!**/*.map"
+        ]
+      },
+      "package.json",
+      "!**/*.map"
     ],
     "extraResources": [
+      {
+        "from": ".protected-service",
+        "to": "equality-itemcode-version",
+        "filter": [
+          "**/*"
+        ]
+      },
       {
         "from": "../equality-itemcode-version",
         "to": "equality-itemcode-version",
         "filter": [
-          "index.js",
           "package.json",
           "package-lock.json",
-          "playwright_login.mjs",
-          "browser_login_test.mjs",
           "ocr_helper",
           "ocr_helper.ps1",
           "ocr_image_preprocessor.cs",
-          "ocr-code-utils.js",
-          "youtube-chat-utils.js",
-          "mac-ocr-runner.js",
-          "retry-settings.js",
-          "browser-result-events.js",
-          "browser-retry-notification.js",
-          "detected-code-queue.js",
           "ocr_helper.swift",
-          "service_config.json.example",
-          "node_modules/**/*"
+          "service_config.json.example"
         ]
       },
       {
@@ -52,6 +70,22 @@
         "to": "equality-itemcode-version/node_modules",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "bundled/tools",
+        "to": "tools",
+        "filter": [
+          "**/*",
+          "!**/.gitkeep"
+        ]
+      },
+      {
+        "from": "bundled/playwright-browsers",
+        "to": "playwright-browsers",
+        "filter": [
+          "**/*",
+          "!**/.gitkeep"
         ]
       }
     ],

@@ -13,12 +13,44 @@ npm start
 เมื่อเปิดครั้งแรก แอปจะตรวจสอบ Node.js, yt-dlp, FFmpeg, OCR และ Playwright Chromium
 ถ้ารายการใดยังไม่พร้อม ให้กด `Download` ที่รายการนั้น แล้วกด `ตรวจสอบอีกครั้ง`
 
+ก่อนเข้าหน้าหลัก แอปจะเปิดหน้า `Login Discord` หรือ `Activate License code` และตรวจสอบสิทธิ์กับ Discord auth
+server ที่ตั้งไว้ใน `service_config.json`:
+
+```json
+{
+  "discord_auth_server_url": "https://equalityitemcode.threemandev.com"
+}
+```
+
+โปรดดู server ตัวอย่างที่ `../discord-auth-server` สำหรับการตั้งค่า OAuth2,
+`AUTHORIZED_SERVER_IDS` และ `DISCORD_CONTACT_URL` โดยโฟลเดอร์นี้ตั้งใจให้ deploy
+แยกต่างหากและไม่ถูกรวมใน desktop build
+
+เมื่อ Login สำเร็จ desktop จะเรียก `GET /api/discord/session` และ
+`GET /api/authorized-servers` แล้วเปรียบเทียบ Server ID หากไม่ตรงกันจะแสดงปุ่ม
+`Contact me` แทนหน้าหลัก โดย Discord session มีอายุ 30 วัน
+
+ผู้ใช้ที่เข้าใช้งานด้วย License code จะใช้ได้ตามอายุ License, ถูกจำกัดบัญชีรับ
+ItemCode เหลือ 1 บัญชี และจะไม่แสดง Telegram/Discord Notification ในหน้าจอ
+
 ## สร้างไฟล์ติดตั้ง
 
+Release build จะเตรียมไฟล์ป้องกันและรวม runtime ที่ต้องใช้ไว้ใน installer/DMG
+ได้แก่ Node.js, FFmpeg, yt-dlp และ Playwright Chromium จึงไม่ต้องดาวน์โหลดไฟล์
+เหล่านี้หลังติดตั้ง (ต้อง build บนระบบปฏิบัติการเป้าหมาย)
+
 ```bash
-npm run dist -- --mac
-npm run dist -- --win
+# สร้าง release สำหรับระบบปัจจุบัน
+npm run dist:release -- --win
+npm run dist:release -- --mac
+
+# สร้างทุก target ที่รองรับบน CI
+npm run dist:release
 ```
+
+ขั้นตอนนี้ใช้ JavaScript obfuscation, ASAR integrity และ Electron fuses เพื่อเพิ่ม
+ต้นทุนการ reverse engineer แต่ไม่สามารถทำให้ client ที่ติดตั้งแล้วเป็นความลับถาวรได้
+ดังนั้น secret และกฎอนุญาตต้องอยู่ที่ auth server เท่านั้น
 
 หน้าจอหลักมีบัญชี Check Serial และรายการบัญชีรับ ItemCode ที่เพิ่มได้หลายรายการ
 ระบบจะรับ ItemCode ตามลำดับบัญชีที่เพิ่มไว้ แล้ววนกลับรายการแรกเมื่อถึงรายการสุดท้าย
@@ -32,13 +64,13 @@ Changelog ภาษาไทย และ log ที่กรองได้ท�
 
 โปรเจกต์ตั้งค่า `electron-updater` ให้ใช้ public release-only repository
 `nucrasenaa/itemcode-releases` แล้ว การปล่อยเวอร์ชันให้เพิ่ม version ใน
-`package.json` เช่น `0.2.1` และสร้าง tag ให้ตรงกัน เช่น `v0.2.1` จากนั้น GitHub Actions
+`package.json` เช่น `3.0.0` และสร้าง tag ให้ตรงกัน เช่น `v3.0.0` จากนั้น GitHub Actions
 จะ build และ publish artifacts ของ macOS/Windows ไปยัง GitHub Release
 โดย workflow ใช้ secret `RELEASE_REPO_TOKEN` สำหรับ repo release-only
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v3.0.0
+git push origin v3.0.0
 ```
 
 แอปจะตรวจสอบ Update อัตโนมัติหลังเปิดประมาณ 3 วินาที และมีปุ่มตรวจสอบเอง

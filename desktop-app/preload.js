@@ -6,6 +6,13 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
     downloadRequirement: (id) => ipcRenderer.invoke('requirements:download', id),
     openRequirementHelp: (id) => ipcRenderer.invoke('requirements:help', id),
     saveRedeemAttempts: (value) => ipcRenderer.invoke('settings:save-redeem-attempts', value),
+    getDiscordConfig: () => ipcRenderer.invoke('discord:config'),
+    getDiscordAuthState: () => ipcRenderer.invoke('discord:auth-state'),
+    loginDiscord: () => ipcRenderer.invoke('discord:login'),
+    activateLicense: (code) => ipcRenderer.invoke('license:activate', code),
+    heartbeatAuth: () => ipcRenderer.invoke('discord:heartbeat'),
+    openDiscordContact: () => ipcRenderer.invoke('discord:contact'),
+    logoutDiscord: () => ipcRenderer.invoke('discord:logout'),
     loadSettings: () => ipcRenderer.invoke('settings:load'),
     saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
     saveItemcodeAccountOrder: (accounts) => ipcRenderer.invoke('settings:save-itemcode-account-order', accounts),
@@ -42,6 +49,11 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
         const listener = (_event, message) => callback(message);
         ipcRenderer.on('service:youtube-chat', listener);
         return () => ipcRenderer.removeListener('service:youtube-chat', listener);
+    },
+    onDiscordAuthState: (callback) => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('discord:auth-state', listener);
+        return () => ipcRenderer.removeListener('discord:auth-state', listener);
     },
     onUpdateState: (callback) => {
         const listener = (_event, state) => callback(state);

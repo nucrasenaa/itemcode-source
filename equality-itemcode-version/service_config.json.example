@@ -12,6 +12,11 @@
   "discord_webhook_urls": [],
   "discord_enabled": false,
 
+  // Discord OAuth2 gate: URL ของ Node auth server ที่คุณนำไป deploy เอง
+  "discord_auth_server_url": "https://equalityitemcode.threemandev.com",
+  // ใช้เป็น fallback หาก auth server ส่ง contactUrl ไม่ได้
+  "discord_contact_url": "",
+
   // Telegram: ใช้แจ้งเตือนเมื่อพบ code และแจ้งผลการเคลมผ่าน Browser
   // ปล่อยค่าว่างได้ ระบบจะสแกนและทำงานต่อโดยไม่ส่ง Telegram
   "telegram_token": "",
