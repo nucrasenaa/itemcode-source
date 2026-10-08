@@ -10,14 +10,47 @@ const BUNDLED_ROOT = path.join(DESKTOP_ROOT, 'bundled');
 const TOOLS_ROOT = path.join(BUNDLED_ROOT, 'tools');
 const BROWSERS_ROOT = path.join(BUNDLED_ROOT, 'playwright-browsers');
 
-function commandPath(command) {
+function commandPaths(command) {
     const resolver = process.platform === 'win32' ? 'where.exe' : 'which';
     const result = spawnSync(resolver, [command], { encoding: 'utf8', windowsHide: true });
-    if (result.status !== 0) return '';
+    if (result.status !== 0) return [];
     return String(result.stdout || '')
         .split(/\r?\n/)
         .map(line => line.trim())
-        .find(Boolean) || '';
+        .filter(Boolean);
+}
+
+function findExecutableUnder(root, executable, maxDepth = 5) {
+    if (!root || !fs.existsSync(root) || maxDepth < 0) return [];
+    const found = [];
+    let entries;
+    try {
+        entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+        return found;
+    }
+    for (const entry of entries) {
+        const fullPath = path.join(root, entry.name);
+        if (entry.isFile() && entry.name.toLowerCase() === executable.toLowerCase()) {
+            found.push(fullPath);
+        } else if (entry.isDirectory()) {
+            found.push(...findExecutableUnder(fullPath, executable, maxDepth - 1));
+        }
+    }
+    return found;
+}
+
+function isLikelyRealFfmpeg(file) {
+    if (!file || !fs.existsSync(file)) return false;
+    try {
+        // Chocolatey exposes a tiny shim in its bin directory. Copy the real
+        // binary instead, otherwise the bundled executable cannot find the
+        // installation after Chocolatey is absent on the user's machine.
+        if (process.platform === 'win32' && fs.statSync(file).size < 1_000_000) return false;
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function run(command, args, options = {}) {
@@ -61,8 +94,9 @@ function verifyExecutable(file, args) {
 
 function installFfmpegIfMissing() {
     const command = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    let resolved = process.env.FFMPEG_PATH || commandPath(command);
-    if (resolved && fs.existsSync(resolved)) return resolved;
+    let candidates = [process.env.FFMPEG_PATH, ...commandPaths(command)];
+    let resolved = candidates.find(isLikelyRealFfmpeg);
+    if (resolved) return resolved;
 
     if (process.platform === 'win32') {
         run('choco.exe', ['install', 'ffmpeg', '-y', '--no-progress']);
@@ -71,8 +105,15 @@ function installFfmpegIfMissing() {
     } else {
         throw new Error('รองรับการ bundle FFmpeg ใน release นี้เฉพาะ Windows และ macOS');
     }
-    resolved = process.env.FFMPEG_PATH || commandPath(command);
-    if (!resolved || !fs.existsSync(resolved)) throw new Error('ติดตั้ง FFmpeg แล้วแต่ยังหา executable ไม่พบ');
+    candidates = [
+        process.env.FFMPEG_PATH,
+        ...commandPaths(command),
+        ...(process.platform === 'win32'
+            ? findExecutableUnder(path.join(process.env.ProgramData || '', 'chocolatey', 'lib', 'ffmpeg', 'tools'), command)
+            : [])
+    ];
+    resolved = candidates.find(isLikelyRealFfmpeg);
+    if (!resolved) throw new Error('ติดตั้ง FFmpeg แล้วแต่ยังหา executable จริงไม่พบ');
     return resolved;
 }
 

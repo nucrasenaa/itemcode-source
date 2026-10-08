@@ -21,6 +21,8 @@ jobs:
         run: |
           if git log -1 --format=%B | grep -Fq '[release-macos]'; then
             echo 'platforms=["macos-latest"]' >> "$GITHUB_OUTPUT"
+          elif git log -1 --format=%B | grep -Fq '[release-windows]'; then
+            echo 'platforms=["windows-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'platforms=["macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
