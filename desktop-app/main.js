@@ -4,7 +4,8 @@ const {
     dialog,
     ipcMain,
     shell,
-    Notification
+    Notification,
+    safeStorage
 } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const crypto = require('crypto');
@@ -49,11 +50,16 @@ let updateInstallInFlight = false;
 let discordAuthState = {
     authenticated: false,
     authorized: false,
+    mode: 'none',
     user: null,
     matchedServerId: '',
+    expiresAt: '',
+    licenseExpiresAt: '',
     message: 'กรุณา Login ด้วย Discord ก่อนใช้งาน'
 };
 let discordLoginInFlight = null;
+let authSession = null;
+let authHeartbeatTimer = null;
 
 // Download updates automatically, then let the user choose when to restart.
 // autoInstallOnAppQuit also covers the case where the user closes the app
@@ -499,6 +505,22 @@ function applyDiscordWebhooks(config, source) {
     return urls;
 }
 
+function settingsForCurrentAccess(settings = {}) {
+    if (discordAuthState.mode !== 'license') return settings;
+    const accounts = normalizeItemcodeAccounts(settings).slice(0, 1);
+    return {
+        ...settings,
+        itemcodeAccounts: accounts,
+        username2: accounts[0]?.username || '',
+        password2: accounts[0]?.password || '',
+        telegramToken: '',
+        telegramChatId: '',
+        telegramEnabled: false,
+        discordWebhookUrls: [],
+        discordEnabled: false
+    };
+}
+
 function ensureRuntimeDirectory() {
     if (!app.isPackaged) return SERVICE_SOURCE_DIR;
 
@@ -629,7 +651,9 @@ async function loadDiscordPublicConfig() {
         return {
             ok: true,
             contactUrl: safeDiscordContactUrl(payload.contactUrl) || fallback,
-            authServerUrl: baseUrl
+            authServerUrl: baseUrl,
+            discordSessionDays: Number(payload.discordSessionDays) || 30,
+            licenseDurations: Array.isArray(payload.licenseDurations) ? payload.licenseDurations : [3, 7, 30]
         };
     } catch (error) {
         return {
@@ -638,6 +662,136 @@ async function loadDiscordPublicConfig() {
             message: `เชื่อมต่อ Discord auth server ไม่ได้: ${error.message}`
         };
     }
+}
+
+function authSessionPath() {
+    return path.join(app.getPath('userData'), 'discord-auth-session.bin');
+}
+
+function clientIdPath() {
+    return path.join(app.getPath('userData'), 'discord-auth-client-id');
+}
+
+function readClientId() {
+    try {
+        const existing = fs.readFileSync(clientIdPath(), 'utf8').trim();
+        if (existing) return existing;
+    } catch (error) {
+        // Generate an ID below when this is the first launch.
+    }
+    const generated = crypto.randomUUID();
+    fs.mkdirSync(path.dirname(clientIdPath()), { recursive: true });
+    fs.writeFileSync(clientIdPath(), generated, 'utf8');
+    return generated;
+}
+
+function saveAuthSession(session) {
+    authSession = {
+        token: String(session.token || ''),
+        mode: session.mode || 'discord',
+        user: session.user || null,
+        expiresAt: session.expiresAt || session.sessionExpiresAt || '',
+        licenseExpiresAt: session.licenseExpiresAt || ''
+    };
+    const raw = JSON.stringify(authSession);
+    const stored = safeStorage.isEncryptionAvailable()
+        ? `encrypted:${safeStorage.encryptString(raw).toString('base64')}`
+        : `plain:${raw}`;
+    fs.mkdirSync(path.dirname(authSessionPath()), { recursive: true });
+    fs.writeFileSync(authSessionPath(), stored, 'utf8');
+    discordAuthState = {
+        authenticated: true,
+        authorized: true,
+        mode: authSession.mode,
+        user: authSession.user,
+        matchedServerId: '',
+        expiresAt: authSession.expiresAt,
+        licenseExpiresAt: authSession.licenseExpiresAt,
+        message: authSession.mode === 'license' ? 'License ใช้งานได้' : 'ตรวจสอบ Discord Server ผ่านแล้ว'
+    };
+    startAuthHeartbeat();
+    return { ...discordAuthState };
+}
+
+function readAuthSession() {
+    try {
+        const stored = fs.readFileSync(authSessionPath(), 'utf8');
+        if (stored.startsWith('encrypted:')) {
+            if (!safeStorage.isEncryptionAvailable()) return null;
+            return JSON.parse(safeStorage.decryptString(Buffer.from(stored.slice(10), 'base64')));
+        }
+        if (stored.startsWith('plain:')) return JSON.parse(stored.slice(6));
+    } catch (error) {
+        // Missing, corrupted, or unavailable session is treated as logged out.
+    }
+    return null;
+}
+
+function clearAuthSession(message = 'กรุณา Login ด้วย Discord หรือ License code ก่อนใช้งาน') {
+    authSession = null;
+    try { fs.rmSync(authSessionPath(), { force: true }); } catch (error) { /* best effort */ }
+    if (authHeartbeatTimer) clearInterval(authHeartbeatTimer);
+    authHeartbeatTimer = null;
+    discordAuthState = {
+        authenticated: false,
+        authorized: false,
+        mode: 'none',
+        user: null,
+        matchedServerId: '',
+        expiresAt: '',
+        licenseExpiresAt: '',
+        message
+    };
+    return { ...discordAuthState };
+}
+
+function startAuthHeartbeat() {
+    if (authHeartbeatTimer) clearInterval(authHeartbeatTimer);
+    authHeartbeatTimer = setInterval(() => heartbeatAuthSession(), 60 * 1000);
+    authHeartbeatTimer.unref?.();
+}
+
+async function heartbeatAuthSession() {
+    if (!authSession?.token) return;
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        await fetchJson(`${baseUrl}/api/session/heartbeat`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${authSession.token}` }
+        });
+    } catch (error) {
+        if (/401|หมดอายุ|invalid/i.test(error.message)) {
+            clearAuthSession('Session หมดอายุ กรุณา Login ใหม่');
+            send('discord:auth-state', { ...discordAuthState });
+        }
+    }
+}
+
+async function restoreAuthSession() {
+    if (authSession?.token) return { ...discordAuthState };
+    const stored = readAuthSession();
+    if (!stored?.token) return { ...discordAuthState };
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        const payload = await fetchJson(`${baseUrl}/api/session/validate`, {
+            headers: { Authorization: `Bearer ${stored.token}` }
+        });
+        authSession = { ...stored, ...payload, token: stored.token, expiresAt: payload.expiresAt || stored.expiresAt };
+        discordAuthState = {
+            authenticated: true,
+            authorized: true,
+            mode: payload.mode || stored.mode || 'discord',
+            user: payload.user || stored.user || null,
+            matchedServerId: '',
+            expiresAt: payload.expiresAt || stored.expiresAt || '',
+            licenseExpiresAt: payload.licenseExpiresAt || stored.licenseExpiresAt || '',
+            message: payload.mode === 'license' ? 'License ใช้งานได้' : 'Session Discord ยังใช้งานได้'
+        };
+        startAuthHeartbeat();
+    } catch (error) {
+        clearAuthSession('Session หมดอายุ กรุณา Login ใหม่');
+    }
+    return { ...discordAuthState };
 }
 
 async function loginDiscord() {
@@ -709,6 +863,7 @@ async function loginDiscord() {
                         const loginUrl = new URL(`${baseUrl}/auth/discord/start`);
                         loginUrl.searchParams.set('state', expectedState);
                         loginUrl.searchParams.set('callback', localCallback);
+                        loginUrl.searchParams.set('client_id', readClientId());
                         await shell.openExternal(loginUrl.toString());
                     } catch (error) {
                         finish(error);
@@ -724,32 +879,43 @@ async function loginDiscord() {
             const serverIds = Array.isArray(allowlist.serverIds)
                 ? allowlist.serverIds.map(id => String(id))
                 : [];
-            const matchedServerId = serverIds.find(id => guildIds.has(id)) || '';
-            const authorized = Boolean(matchedServerId);
+            const matchedServerId = serverIds.find(id => guildIds.has(id)) || session.matchedServerId || '';
+            const authorized = Boolean(session.authorized && matchedServerId);
             const contactConfig = await loadDiscordPublicConfig();
-            discordAuthState = {
-                authenticated: true,
-                authorized,
-                user: session.user || null,
-                matchedServerId,
-                message: authorized
-                    ? 'ตรวจสอบ Discord Server ผ่านแล้ว'
-                    : 'บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต'
-            };
+            if (authorized && session.sessionToken) {
+                saveAuthSession({
+                    token: session.sessionToken,
+                    mode: 'discord',
+                    user: session.user || null,
+                    expiresAt: session.sessionExpiresAt || '',
+                    licenseExpiresAt: ''
+                });
+                discordAuthState.matchedServerId = matchedServerId;
+            } else {
+                clearAuthSession('บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต');
+                discordAuthState.user = session.user || null;
+            }
             return {
                 ok: true,
                 authorized,
+                mode: 'discord',
                 user: session.user || null,
                 matchedServerId,
                 contactUrl: contactConfig.contactUrl,
-                message: discordAuthState.message
+                sessionExpiresAt: session.sessionExpiresAt || '',
+                message: authorized
+                    ? 'ตรวจสอบ Discord Server ผ่านแล้ว'
+                    : 'บัญชีนี้ไม่ได้อยู่ใน Discord Server ที่อนุญาต'
             };
         } catch (error) {
             discordAuthState = {
                 authenticated: false,
                 authorized: false,
+                mode: 'none',
                 user: null,
                 matchedServerId: '',
+                expiresAt: '',
+                licenseExpiresAt: '',
                 message: error.message
             };
             return { ok: false, authorized: false, message: error.message };
@@ -758,6 +924,39 @@ async function loginDiscord() {
         }
     })();
     return discordLoginInFlight;
+}
+
+async function activateLicense(code) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (!normalizedCode) return { ok: false, authorized: false, message: 'กรุณากรอก License code' };
+    try {
+        const baseUrl = discordAuthServerUrl(readConfig());
+        const result = await fetchJson(`${baseUrl}/api/license/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: normalizedCode, clientId: readClientId() })
+        });
+        if (!result.authorized || !result.sessionToken) {
+            return { ok: false, authorized: false, message: result.message || 'License code ใช้งานไม่ได้' };
+        }
+        saveAuthSession({
+            token: result.sessionToken,
+            mode: 'license',
+            user: null,
+            expiresAt: result.sessionExpiresAt || result.licenseExpiresAt,
+            licenseExpiresAt: result.licenseExpiresAt || result.sessionExpiresAt
+        });
+        return {
+            ok: true,
+            authorized: true,
+            mode: 'license',
+            licenseExpiresAt: result.licenseExpiresAt || '',
+            sessionExpiresAt: result.sessionExpiresAt || '',
+            message: 'License code ใช้งานได้'
+        };
+    } catch (error) {
+        return { ok: false, authorized: false, message: error.message };
+    }
 }
 
 function writeConfig(config) {
@@ -1457,6 +1656,7 @@ function consumeServiceOutput(chunk, bufferName) {
 
 async function startService(settings, serviceArgs = [], mode = 'running') {
     if (serviceProcess) return { running: true };
+    settings = settingsForCurrentAccess(settings);
     const runtime = ensureRuntimeDirectory();
     const config = readConfig();
     const itemcodeAccounts = normalizeItemcodeAccounts(settings);
@@ -1674,7 +1874,7 @@ ipcMain.handle('settings:save-redeem-attempts', (_event, value) => {
     writeConfig(config);
 });
 ipcMain.handle('discord:config', () => loadDiscordPublicConfig());
-ipcMain.handle('discord:auth-state', () => ({ ...discordAuthState }));
+ipcMain.handle('discord:auth-state', () => restoreAuthSession());
 ipcMain.handle('discord:login', () => loginDiscord());
 ipcMain.handle('discord:contact', async () => {
     const publicConfig = await loadDiscordPublicConfig();
@@ -1684,15 +1884,19 @@ ipcMain.handle('discord:contact', async () => {
     await shell.openExternal(publicConfig.contactUrl);
     return { ok: true };
 });
-ipcMain.handle('discord:logout', () => {
-    discordAuthState = {
-        authenticated: false,
-        authorized: false,
-        user: null,
-        matchedServerId: '',
-        message: 'กรุณา Login ด้วย Discord ก่อนใช้งาน'
-    };
-    return { ok: true };
+ipcMain.handle('discord:logout', async () => {
+    try {
+        if (authSession?.token) {
+            const baseUrl = discordAuthServerUrl(readConfig());
+            await fetchJson(`${baseUrl}/api/session/logout`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${authSession.token}` }
+            });
+        }
+    } catch (error) {
+        // Local logout must still finish if the auth server is unavailable.
+    }
+    return { ok: true, ...clearAuthSession() };
 });
 ipcMain.handle('settings:load', () => {
     const config = readConfig();
@@ -1713,6 +1917,7 @@ ipcMain.handle('settings:load', () => {
     };
 });
 ipcMain.handle('settings:save', (_event, settings) => {
+    settings = settingsForCurrentAccess(settings);
     const config = readConfig();
     const itemcodeAccounts = normalizeItemcodeAccounts(settings);
     applyItemcodeAccounts(config, { itemcodeAccounts });
@@ -1731,7 +1936,8 @@ ipcMain.handle('settings:save', (_event, settings) => {
     return { ok: true };
 });
 ipcMain.handle('settings:save-itemcode-account-order', (_event, accounts) => {
-    const rawAccounts = Array.isArray(accounts) ? accounts : [];
+    let rawAccounts = Array.isArray(accounts) ? accounts : [];
+    if (discordAuthState.mode === 'license') rawAccounts = rawAccounts.slice(0, 1);
     const itemcodeAccounts = normalizeItemcodeAccounts({ itemcodeAccounts: rawAccounts });
     if (itemcodeAccounts.length !== rawAccounts.length) {
         return { ok: false, message: 'บันทึกลำดับไม่ได้ กรุณากรอก username/password ของทุกบัญชีให้ครบ' };
@@ -1748,8 +1954,14 @@ ipcMain.handle('service:test-itemcode', (_event, payload) => {
     if (!code) throw new Error('กรุณากรอก ItemCode สำหรับทดสอบ');
     return startService(payload?.settings || {}, ['--test-browser-redeem', code], 'test-itemcode');
 });
-ipcMain.handle('telegram:test', (_event, settings) => testTelegram(settings));
-ipcMain.handle('discord:test', (_event, settings) => testDiscord(settings));
+ipcMain.handle('license:activate', (_event, code) => activateLicense(code));
+ipcMain.handle('discord:heartbeat', () => heartbeatAuthSession().then(() => ({ ...discordAuthState })));
+ipcMain.handle('telegram:test', (_event, settings) => discordAuthState.mode === 'license'
+    ? { ok: false, message: 'License code ไม่รองรับ Telegram Notification' }
+    : testTelegram(settings));
+ipcMain.handle('discord:test', (_event, settings) => discordAuthState.mode === 'license'
+    ? { ok: false, message: 'License code ไม่รองรับ Discord Notification' }
+    : testDiscord(settings));
 ipcMain.handle('service:stop', () => stopService());
 ipcMain.handle('service:state', () => ({ running: Boolean(serviceProcess), mode: serviceMode }));
 ipcMain.handle('update:status', () => updatePayload());

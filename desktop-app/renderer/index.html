@@ -17,6 +17,13 @@
                 <button class="button button-primary" id="discordLogin" type="button">Login Discord</button>
                 <button class="button button-ghost" id="discordContact" type="button">Contact me</button>
             </div>
+            <div class="license-gate-form">
+                <div class="license-divider"><span>หรือใช้ License Code</span></div>
+                <div class="license-gate-input-row">
+                    <input id="licenseCode" type="text" autocomplete="off" placeholder="เช่น ITEM-XXXXX-XXXXX" />
+                    <button class="button button-ghost" id="activateLicense" type="button">Activate</button>
+                </div>
+            </div>
             <p class="discord-gate-status" id="discordGateStatus" role="status" aria-live="polite">กำลังเตรียม Discord auth...</p>
             <p class="discord-gate-user" id="discordGateUser" hidden></p>
         </div>
@@ -81,7 +88,7 @@
                     <input id="password" autocomplete="current-password" type="password" placeholder="กรอก password" />
                 </label>
               </div>
-              <div class="itemcode-accounts-box">
+              <div class="itemcode-accounts-box" id="itemcodeAccountsBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">บัญชีสำหรับรับ ItemCode</span>
@@ -110,7 +117,7 @@
                 </div>
                 <p class="youtube-chat-warning">ไม่ต้องใช้ API Key; ตัวอ่านแชตเป็นไลบรารีไม่เป็นทางการและอาจหยุดทำงานเมื่อ YouTube เปลี่ยนระบบ</p>
               </div>
-              <div class="telegram-box">
+              <div class="telegram-box" id="telegramNotificationBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">Telegram Notification</span>
@@ -133,7 +140,7 @@
                     </label>
                 </div>
               </div>
-              <div class="discord-box">
+              <div class="discord-box" id="discordNotificationBox">
                 <div class="telegram-heading">
                     <div>
                         <span class="telegram-title">Discord Notification</span>

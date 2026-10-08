@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
     getDiscordConfig: () => ipcRenderer.invoke('discord:config'),
     getDiscordAuthState: () => ipcRenderer.invoke('discord:auth-state'),
     loginDiscord: () => ipcRenderer.invoke('discord:login'),
+    activateLicense: (code) => ipcRenderer.invoke('license:activate', code),
+    heartbeatAuth: () => ipcRenderer.invoke('discord:heartbeat'),
     openDiscordContact: () => ipcRenderer.invoke('discord:contact'),
     logoutDiscord: () => ipcRenderer.invoke('discord:logout'),
     loadSettings: () => ipcRenderer.invoke('settings:load'),
@@ -47,6 +49,11 @@ contextBridge.exposeInMainWorld('itemcodeDesktop', {
         const listener = (_event, message) => callback(message);
         ipcRenderer.on('service:youtube-chat', listener);
         return () => ipcRenderer.removeListener('service:youtube-chat', listener);
+    },
+    onDiscordAuthState: (callback) => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('discord:auth-state', listener);
+        return () => ipcRenderer.removeListener('discord:auth-state', listener);
     },
     onUpdateState: (callback) => {
         const listener = (_event, state) => callback(state);

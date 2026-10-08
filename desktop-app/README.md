@@ -13,7 +13,7 @@ npm start
 เมื่อเปิดครั้งแรก แอปจะตรวจสอบ Node.js, yt-dlp, FFmpeg, OCR และ Playwright Chromium
 ถ้ารายการใดยังไม่พร้อม ให้กด `Download` ที่รายการนั้น แล้วกด `ตรวจสอบอีกครั้ง`
 
-ก่อนเข้าหน้าหลัก แอปจะเปิดหน้า `Login Discord` และตรวจสอบสมาชิกกับ Discord auth
+ก่อนเข้าหน้าหลัก แอปจะเปิดหน้า `Login Discord` หรือ `Activate License code` และตรวจสอบสิทธิ์กับ Discord auth
 server ที่ตั้งไว้ใน `service_config.json`:
 
 ```json
@@ -28,7 +28,10 @@ server ที่ตั้งไว้ใน `service_config.json`:
 
 เมื่อ Login สำเร็จ desktop จะเรียก `GET /api/discord/session` และ
 `GET /api/authorized-servers` แล้วเปรียบเทียบ Server ID หากไม่ตรงกันจะแสดงปุ่ม
-`Contact me` แทนหน้าหลัก
+`Contact me` แทนหน้าหลัก โดย Discord session มีอายุ 30 วัน
+
+ผู้ใช้ที่เข้าใช้งานด้วย License code จะใช้ได้ตามอายุ License, ถูกจำกัดบัญชีรับ
+ItemCode เหลือ 1 บัญชี และจะไม่แสดง Telegram/Discord Notification ในหน้าจอ
 
 ## สร้างไฟล์ติดตั้ง
 
