@@ -35,6 +35,8 @@ const elements = {
     cancelItemcode: document.getElementById('cancelItemcode'),
     runState: document.getElementById('runState'),
     runStateText: document.getElementById('runStateText'),
+    licenseStatus: document.getElementById('licenseStatus'),
+    licenseDaysRemaining: document.getElementById('licenseDaysRemaining'),
     configStatus: document.getElementById('configStatus'),
     logList: document.getElementById('logList'),
     emptyLog: document.getElementById('emptyLog'),
@@ -59,6 +61,7 @@ let configRevision = 0;
 let discordContactUrl = '';
 let accessMode = 'none';
 let licenseExpiresAt = '';
+let licenseRemainingTimer = null;
 
 const SECTION_STATE_PREFIX = 'itemcode.desktop.section.';
 const LOG_STATUS_LABELS = {
@@ -83,10 +86,37 @@ function setDiscordGateStatus(message, error = false) {
     elements.discordGateStatus.classList.toggle('error', error);
 }
 
+function updateLicenseRemaining() {
+    const expiresAt = new Date(licenseExpiresAt).getTime();
+    const isLicense = accessMode === 'license' && Number.isFinite(expiresAt);
+    elements.licenseStatus.hidden = !isLicense;
+    if (!isLicense) {
+        elements.licenseStatus.removeAttribute('data-expiring');
+        return;
+    }
+    const remainingMs = expiresAt - Date.now();
+    const remainingDays = Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+    elements.licenseDaysRemaining.textContent = remainingDays > 0
+        ? `License เหลือ ${remainingDays} วัน`
+        : 'License หมดอายุ';
+    elements.licenseStatus.dataset.expiring = String(remainingDays <= 1);
+    elements.licenseStatus.title = `หมดอายุ ${new Date(expiresAt).toLocaleString('th-TH')}`;
+}
+
+function syncLicenseRemaining() {
+    if (licenseRemainingTimer) clearInterval(licenseRemainingTimer);
+    licenseRemainingTimer = null;
+    updateLicenseRemaining();
+    if (accessMode === 'license' && licenseExpiresAt) {
+        licenseRemainingTimer = setInterval(updateLicenseRemaining, 24 * 60 * 60 * 1000);
+    }
+}
+
 function setDiscordAccess(authorized, user = null, mode = 'discord', nextLicenseExpiresAt = '') {
     const hasAccess = Boolean(authorized);
     accessMode = hasAccess ? mode : 'none';
     licenseExpiresAt = nextLicenseExpiresAt || '';
+    syncLicenseRemaining();
     elements.discordGate.hidden = hasAccess;
     elements.appShell.hidden = !hasAccess;
     const isLicense = hasAccess && accessMode === 'license';

@@ -42,6 +42,10 @@
                     <span class="state-dot"></span>
                     <span id="runStateText">หยุดทำงาน</span>
                 </div>
+                <div class="license-status" id="licenseStatus" hidden>
+                    <span class="license-status-dot"></span>
+                    <strong id="licenseDaysRemaining">License เหลือ -- วัน</strong>
+                </div>
                 <button class="button button-ghost" id="checkUpdate" type="button">ตรวจสอบ Update</button>
                 <button class="button button-ghost" id="openChangelog" type="button">Changelog ภาษาไทย</button>
             </div>
@@ -180,7 +184,7 @@
             </div>
         </section>
 
-        <section class="card debug-card">
+        <section class="card debug-card" hidden>
             <div class="section-heading">
                 <div>
                     <p class="section-kicker">รายละเอียดเชิงเทคนิค</p>
