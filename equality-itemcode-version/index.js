@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
+const https = require('https');
 const { extractCodes } = require('./ocr-code-utils');
 const { parseYoutubeChatTarget, youtubeChatMessageText } = require('./youtube-chat-utils');
 const { createDetectedCodeQueue } = require('./detected-code-queue');
@@ -49,6 +50,8 @@ let activeYoutubeChat = null;
 const discordDestinationCache = new Map();
 const discordNotificationCache = new Map();
 const DISCORD_DEDUP_WINDOW_MS = 10 * 60 * 1000;
+const TELEGRAM_REQUEST_TIMEOUT_MS = 15000;
+const TELEGRAM_NETWORK_RETRIES = 3;
 const detectedCodeQueue = createDetectedCodeQueue(async (code, source) => {
     try {
         return await processDetectedCodes([code], source);
@@ -1802,6 +1805,49 @@ async function runBrowserRedeemAfterNotification(serial) {
 }
 
 // Send Telegram Notification
+function requestTelegramMessage(url, payload, timeoutMs = TELEGRAM_REQUEST_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+        const request = https.request(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(JSON.stringify(payload))
+            },
+            timeout: timeoutMs,
+            agent: false
+        }, response => {
+            let body = '';
+            response.setEncoding('utf8');
+            response.on('data', chunk => { body += chunk; });
+            response.on('end', () => {
+                let data = null;
+                try {
+                    data = JSON.parse(body);
+                } catch (error) { }
+                resolve({
+                    status: response.statusCode || 0,
+                    ok: (response.statusCode || 0) >= 200 && (response.statusCode || 0) < 300 && data?.ok !== false,
+                    body,
+                    data
+                });
+            });
+        });
+        request.on('timeout', () => {
+            request.destroy(new Error(`Telegram request timed out after ${timeoutMs}ms`));
+        });
+        request.on('error', reject);
+        request.end(JSON.stringify(payload));
+    });
+}
+
+function telegramNetworkErrorDetail(error) {
+    return [
+        error?.message,
+        error?.cause?.code,
+        error?.cause?.message
+    ].filter(Boolean).join(' | ');
+}
+
 async function sendTelegram(message, redeemResult = null) {
     const isEnabled = config.telegram_enabled !== undefined ? !!config.telegram_enabled : (!!config.telegram_token && !!config.telegram_chat_id);
     if (!isEnabled || !config.telegram_token || !config.telegram_chat_id) {
@@ -1819,26 +1865,35 @@ async function sendTelegram(message, redeemResult = null) {
     }
 
     const url = `https://api.telegram.org/bot${config.telegram_token}/sendMessage`;
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: config.telegram_chat_id,
-                text: message,
-                parse_mode: 'Markdown'
-            })
-        });
-        if (res.ok) {
-            log(`[+] Telegram Notification sent!`);
-        } else {
-            const txt = await res.text();
-            log(`[-] Telegram API returned failure (HTTP ${res.status}): ${txt}`);
+    const payload = {
+        chat_id: config.telegram_chat_id,
+        text: String(message || '')
+    };
+
+    for (let attempt = 1; attempt <= TELEGRAM_NETWORK_RETRIES; attempt++) {
+        try {
+            const response = await requestTelegramMessage(url, payload);
+            if (response.ok) {
+                log(`[+] Telegram Notification sent!`);
+                return true;
+            }
+
+            log(`[-] Telegram API returned failure (HTTP ${response.status}): ${response.body}`);
+            // Retry only transient server/rate-limit responses. Invalid bot/chat
+            // settings should be reported once instead of delaying the service.
+            if (response.status !== 429 && response.status < 500) {
+                return false;
+            }
+        } catch (error) {
+            log(`[-] Telegram network error (attempt ${attempt}/${TELEGRAM_NETWORK_RETRIES}): ${telegramNetworkErrorDetail(error)}`);
         }
-    } catch (e) {
-        log(`[-] Telegram network error: ${e.message}`);
+
+        if (attempt < TELEGRAM_NETWORK_RETRIES) {
+            await sleep(attempt * 1000);
+        }
     }
-    return true;
+
+    return false;
 }
 
 async function getDiscordDestinationKey(url) {
