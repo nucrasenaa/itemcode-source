@@ -1487,7 +1487,9 @@ async function redeemCodeWithBrowser(serial, username = null, password = null) {
     let browser;
     try {
         const { launch } = await import('cloakbrowser/puppeteer');
-        const headless = process.env.BROWSER_REDEEM_HEADLESS === 'true' || config.browser_redeem_headless === true;
+        const headless = process.env.BROWSER_REDEEM_HEADLESS === 'false'
+            ? false
+            : config.browser_redeem_headless !== false;
         log(`[BROWSER] โหมดการแสดงผล: ${headless ? 'เบื้องหลัง (headless)' : 'มีหน้าต่าง (headed)'}`);
         browser = await launch({ headless, humanize: true, args: [] });
         const pages = await browser.pages();

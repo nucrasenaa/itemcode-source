@@ -1747,6 +1747,9 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
         env: toolEnvironment({
             PLAYWRIGHT_BROWSERS_PATH: preferredBrowserPath(),
             BROWSER_TOKEN_LOGIN_HEADLESS: tokenLoginHeadless ? 'true' : 'false',
+            // Keep both normal and Test ItemCode browser flows hidden.  The
+            // service still accepts an explicit false override for local
+            // diagnostics when needed.
             BROWSER_REDEEM_HEADLESS: 'true',
             NODE_PATH: [serviceNodePath, inheritedNodePath].filter(Boolean).join(path.delimiter)
         }),
