@@ -45,11 +45,15 @@ const elements = {
     emptyLog: document.getElementById('emptyLog'),
     logCount: document.getElementById('logCount'),
     logFilter: document.getElementById('logFilter'),
+    serviceDebugLog: document.getElementById('serviceDebugLog'),
+    serviceDebugLogCount: document.getElementById('serviceDebugLogCount'),
+    clearServiceDebugLog: document.getElementById('clearServiceDebugLog'),
     toast: document.getElementById('toast')
 };
 
 let requirements = [];
 let running = false;
+const serviceDebugLines = [];
 let eventCount = 0;
 let toastTimer = null;
 let itemcodeAccounts = [{ username: '', password: '' }];
@@ -725,6 +729,30 @@ function addItemcodeEvent(event) {
     applyLogFilter();
 }
 
+function addServiceLog(entry) {
+    const text = String(entry?.text || '').replace(/\r/g, '');
+    if (!text) return;
+    const stream = entry?.stream === 'stderr' ? 'stderr' : 'stdout';
+    const time = entry?.time ? new Date(entry.time) : new Date();
+    const timeText = Number.isNaN(time.getTime()) ? new Date().toLocaleTimeString() : time.toLocaleTimeString();
+    for (const line of text.split('\n')) {
+        if (!line) continue;
+        serviceDebugLines.push(`[${timeText}] [${stream}] ${line}`);
+    }
+    while (serviceDebugLines.length > 1000) serviceDebugLines.shift();
+    elements.serviceDebugLog.textContent = serviceDebugLines.length
+        ? serviceDebugLines.join('\n')
+        : 'ยังไม่มี Log จาก service';
+    elements.serviceDebugLogCount.textContent = `${serviceDebugLines.length} บรรทัด`;
+    elements.serviceDebugLog.scrollTop = elements.serviceDebugLog.scrollHeight;
+}
+
+function clearServiceDebugLog() {
+    serviceDebugLines.length = 0;
+    elements.serviceDebugLog.textContent = 'ยังไม่มี Log จาก service';
+    elements.serviceDebugLogCount.textContent = '0 บรรทัด';
+}
+
 async function toggleService() {
     if (running) {
         await api.stop();
@@ -888,6 +916,7 @@ elements.changelogModal.addEventListener('click', event => {
     if (event.target === elements.changelogModal) closeChangelog();
 });
 elements.logFilter.addEventListener('change', applyLogFilter);
+elements.clearServiceDebugLog.addEventListener('click', clearServiceDebugLog);
 elements.addItemcodeAccount.addEventListener('click', () => {
     if (running) return;
     const next = readItemcodeAccounts();

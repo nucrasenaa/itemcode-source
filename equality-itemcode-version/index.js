@@ -597,52 +597,273 @@ async function loginWithBrowserForAccessToken(username, password, options = {}) 
     if (!username || !password) return false;
 
     let browser;
+    let trace = null;
     try {
         const { launch } = await import('cloakbrowser/puppeteer');
         const headless = process.env.BROWSER_TOKEN_LOGIN_HEADLESS !== 'false' &&
             config.browser_token_login_headless !== false;
+        const loginStartedAt = Date.now();
+        trace = (message) => log(`[BROWSER-AUTH][TRACE +${((Date.now() - loginStartedAt) / 1000).toFixed(1)}s] ${message}`);
         log(`[BROWSER-AUTH] กำลัง login เพื่อดึง access_token (${headless ? 'headless' : 'headed'})...`);
+        trace(`เริ่ม browser login; headless=${headless}; target=${PASSPORT_BASE_URL}/hall-of-fame-web/login`);
         browser = await launch({ headless, humanize: true, args: [] });
+        trace('เปิด Browser สำเร็จ');
         const pages = await browser.pages();
         const page = pages[0] || await browser.newPage();
         page.setDefaultNavigationTimeout(120000);
+        trace(`เลือก page สำเร็จ; pages=${pages.length + (pages.length === 0 ? 1 : 0)}`);
 
         const sleepMs = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-        async function waitForTurnstileToken(timeoutMs = 30000) {
+        async function inspectPage(label) {
+            const state = await page.evaluate(() => {
+                const body = document.body?.innerHTML || '';
+                const tokenInputs = Array.from(document.querySelectorAll('input[name="cf-turnstile-response"]'));
+                return {
+                    url: location.href,
+                    title: document.title,
+                    readyState: document.readyState,
+                    challengePlatform: body.includes('challenge-platform'),
+                    turnstileInputs: tokenInputs.length,
+                    tokenPresent: tokenInputs.some(input => Boolean(input.value)),
+                    turnstileWidgets: document.querySelectorAll('.cf-turnstile').length,
+                    challengeIframes: document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]').length,
+                    usernameInputs: document.querySelectorAll('input[name="username"], input[type="email"]').length,
+                    passwordInputs: document.querySelectorAll('input[name="password"], input[type="password"]').length,
+                    submitButtons: document.querySelectorAll('button[type="submit"], input[type="submit"]').length
+                };
+            }).catch(error => ({ error: error.message }));
+            if (state.error) {
+                trace(`${label}: inspect ไม่สำเร็จ: ${state.error}`);
+            } else {
+                trace(`${label}: url=${state.url}; title=${JSON.stringify(state.title)}; ready=${state.readyState}; ` +
+                    `challenge-platform=${state.challengePlatform}; turnstileInputs=${state.turnstileInputs}; ` +
+                    `tokenPresent=${state.tokenPresent}; widgets=${state.turnstileWidgets}; challengeIframes=${state.challengeIframes}; ` +
+                    `loginInputs=${state.usernameInputs}/${state.passwordInputs}; submit=${state.submitButtons}`);
+            }
+            return state;
+        }
+
+        async function navigateAndTrace(url, label) {
+            const startedAt = Date.now();
+            trace(`${label}: navigation start -> ${url}`);
+            const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+            trace(`${label}: navigation end; elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s; ` +
+                `status=${response?.status?.() ?? 'n/a'}; finalUrl=${page.url()}`);
+            return response;
+        }
+
+        async function waitForTurnstileToken(timeoutMs = 30000, label = 'Turnstile', options = {}) {
             const deadline = Date.now() + timeoutMs;
+            const startedAt = Date.now();
+            let nextProgressAt = startedAt + (options.progressEveryMs || 0);
             while (Date.now() < deadline) {
-                const token = await page.$eval(
-                    'input[name="cf-turnstile-response"]',
-                    el => el.value || ''
-                ).catch(() => '');
-                if (token) return true;
+                const state = await page.evaluate(() => {
+                    const inputs = Array.from(document.querySelectorAll('input[name="cf-turnstile-response"]'));
+                    return {
+                        tokenPresent: inputs.some(input => Boolean(input.value)),
+                        inputCount: inputs.length,
+                        widgetCount: document.querySelectorAll('.cf-turnstile').length,
+                        iframeCount: document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]').length
+                    };
+                }).catch(() => ({ tokenPresent: false, inputCount: 0, iframeCount: 0 }));
+                if (state.tokenPresent) {
+                    trace(`${label}: ได้ token แล้ว; elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+                    return true;
+                }
+                if (options.progressEveryMs && Date.now() >= nextProgressAt) {
+                    trace(`${label}: ยังรอ token; elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s; ` +
+                        `inputs=${state.inputCount}; iframes=${state.iframeCount}; url=${page.url()}`);
+                    nextProgressAt = Date.now() + options.progressEveryMs;
+                }
                 await sleepMs(500);
+            }
+            if (options.timeoutLog !== false) {
+                const state = await page.evaluate(() => ({
+                    tokenPresent: Array.from(document.querySelectorAll('input[name="cf-turnstile-response"]'))
+                        .some(input => Boolean(input.value)),
+                    inputCount: document.querySelectorAll('input[name="cf-turnstile-response"]').length,
+                    widgetCount: document.querySelectorAll('.cf-turnstile').length,
+                    iframeCount: document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]').length
+                })).catch(() => ({ tokenPresent: false, inputCount: 0, iframeCount: 0 }));
+                trace(`${label}: timeout หลัง ${(timeoutMs / 1000).toFixed(0)}s; token=${state.tokenPresent}; ` +
+                    `inputs=${state.inputCount}; widgets=${state.widgetCount}; iframes=${state.iframeCount}; url=${page.url()}`);
             }
             return false;
         }
 
-        async function clickTurnstileIfVisible(timeoutMs = 120000) {
+        async function clickTurnstileIfVisible(timeoutMs = 120000, label = 'Turnstile') {
             const deadline = Date.now() + timeoutMs;
-            while (Date.now() < deadline) {
-                if (await waitForTurnstileToken(1000)) return true;
+            const startedAt = Date.now();
+            let nextProgressAt = startedAt;
+            let lastClickAt = 0;
+            let manualMode = false;
+            let manualPrompted = false;
+            trace(`${label}: เริ่มรอ/กด challenge; timeout=${(timeoutMs / 1000).toFixed(0)}s; headless=${headless}`);
 
-                const wrapper = await page.$('div:has(> div > div > input[name="cf-turnstile-response"])');
-                const wrapperBox = wrapper ? await wrapper.boundingBox().catch(() => null) : null;
-                if (wrapperBox && wrapperBox.width > 250 && wrapperBox.height > 40) {
-                    await sleepMs(800);
-                    await page.mouse.click(wrapperBox.x + 22, wrapperBox.y + 32);
-                } else {
-                    const iframe = await page.$('iframe[src*="challenges.cloudflare.com"]');
-                    const iframeBox = iframe ? await iframe.boundingBox().catch(() => null) : null;
-                    if (iframeBox && iframeBox.width > 250 && iframeBox.height > 40) {
-                        await sleepMs(800);
-                        await page.mouse.click(iframeBox.x + 42, iframeBox.y + 45);
+            async function turnstileFrameTargets() {
+                const targets = [];
+                for (const frame of page.frames()) {
+                    if (!/challenges\.cloudflare\.com/i.test(frame.url())) continue;
+                    // The checkbox is inside a cross-origin iframe.  It cannot
+                    // be found with page.$(), but Puppeteer can address the
+                    // frame and click its visible control.
+                    for (const selector of [
+                        'input[type="checkbox"]',
+                        'button',
+                        '[role="checkbox"]'
+                    ]) {
+                        const element = await frame.$(selector).catch(() => null);
+                        if (!element) continue;
+                        const box = await element.boundingBox().catch(() => null);
+                        if (box && box.width > 0 && box.height > 0) {
+                            targets.push({ frame, element, selector, box });
+                            break;
+                        }
+                    }
+                }
+                return targets;
+            }
+
+            async function tryAutomatedTurnstileClicks(widgetBox) {
+                await page.bringToFront().catch(() => {});
+
+                // Prefer the real checkbox in the Turnstile iframe.  Clicking
+                // the outer .cf-turnstile div is unreliable and can remove
+                // the host node before the next strategy runs.
+                const frameTargets = await turnstileFrameTargets();
+                for (const target of frameTargets) {
+                    const name = `iframe ${target.selector} click`;
+                    try {
+                        trace(`${label}: automated strategy -> ${name}; frame=${target.frame.url()}`);
+                        await target.element.click({ delay: 80 });
+                        if (await waitForTurnstileToken(5000, label, { timeoutLog: false })) {
+                            trace(`${label}: automated strategy สำเร็จ -> ${name}`);
+                            return true;
+                        }
+                    } catch (error) {
+                        trace(`${label}: automated strategy ล้มเหลว -> ${name}: ${error.message}`);
                     }
                 }
 
-                if (await waitForTurnstileToken(2000)) return true;
+                // Some Turnstile versions expose no clickable element in the
+                // child frame.  In that case click the visible iframe itself,
+                // then the checkbox-side of the host widget as a fallback.
+                const iframe = await page.$('iframe[src*="challenges.cloudflare.com"], iframe[title*="Cloudflare"]');
+                const iframeBox = iframe ? await iframe.boundingBox().catch(() => null) : null;
+                const clickTargets = [];
+                if (iframeBox && iframeBox.width > 0 && iframeBox.height > 0) {
+                    clickTargets.push({
+                        name: `iframe coordinate (${Math.round(iframeBox.x)},${Math.round(iframeBox.y)})`,
+                        x: iframeBox.x + Math.min(42, Math.max(12, iframeBox.width / 6)),
+                        y: iframeBox.y + Math.min(38, Math.max(18, iframeBox.height / 2))
+                    });
+                }
+                if (widgetBox && widgetBox.width > 0 && widgetBox.height > 0) {
+                    clickTargets.push({
+                        name: `widget coordinate (${Math.round(widgetBox.x)},${Math.round(widgetBox.y)})`,
+                        x: widgetBox.x + Math.min(42, Math.max(12, widgetBox.width / 6)),
+                        y: widgetBox.y + Math.min(38, Math.max(18, widgetBox.height / 2))
+                    });
+                }
+                for (const target of clickTargets) {
+                    try {
+                        trace(`${label}: automated strategy -> ${target.name}`);
+                        await page.mouse.click(target.x, target.y);
+                        if (await waitForTurnstileToken(5000, label, { timeoutLog: false })) {
+                            trace(`${label}: automated strategy สำเร็จ -> ${target.name}`);
+                            return true;
+                        }
+                    } catch (error) {
+                        trace(`${label}: automated strategy ล้มเหลว -> ${target.name}: ${error.message}`);
+                    }
+                }
+
+                // Only use keyboard fallback while the widget still exists;
+                // otherwise page.focus('.cf-turnstile') reports a misleading
+                // selector error after Cloudflare has rerendered the iframe.
+                if (await page.$('.cf-turnstile')) {
+                    try {
+                        trace(`${label}: automated strategy -> keyboard Tab+Space`);
+                        await page.focus('.cf-turnstile');
+                        await page.keyboard.press('Tab');
+                        await page.keyboard.press('Space');
+                        if (await waitForTurnstileToken(5000, label, { timeoutLog: false })) {
+                            trace(`${label}: automated strategy สำเร็จ -> keyboard Tab+Space`);
+                            return true;
+                        }
+                    } catch (error) {
+                        trace(`${label}: automated strategy ล้มเหลว -> keyboard Tab+Space: ${error.message}`);
+                    }
+                }
+                return false;
             }
+
+            while (Date.now() < deadline) {
+                if (await waitForTurnstileToken(1000, label, { timeoutLog: false })) {
+                    return true;
+                }
+
+                // The previous selector matched the full form row (625px wide),
+                // so x + 22 landed outside the actual 300px Turnstile widget.
+                // Prefer the widget itself and click the checkbox-side area.
+                const widget = await page.$('.cf-turnstile');
+                const widgetBox = widget ? await widget.boundingBox().catch(() => null) : null;
+                const wrapper = widget ? null : await page.$('div:has(> div > div > input[name="cf-turnstile-response"])');
+                const wrapperBox = wrapper ? await wrapper.boundingBox().catch(() => null) : null;
+                let clicked = false;
+                if (!manualMode && widgetBox && widgetBox.width > 250 && widgetBox.height > 40 && Date.now() - lastClickAt > 3000) {
+                    await sleepMs(800);
+                    trace(`${label}: พบ Turnstile widget ที่มองเห็นได้ x=${Math.round(widgetBox.x)}, y=${Math.round(widgetBox.y)}, ` +
+                        `w=${Math.round(widgetBox.width)}, h=${Math.round(widgetBox.height)}; เริ่ม automated strategies`);
+                    lastClickAt = Date.now();
+                    clicked = true;
+                    if (await tryAutomatedTurnstileClicks(widgetBox)) return true;
+                } else if (!manualMode && wrapperBox && wrapperBox.width > 250 && wrapperBox.height > 40 && Date.now() - lastClickAt > 3000) {
+                    await sleepMs(800);
+                    await page.bringToFront().catch(() => {});
+                    const clickX = wrapperBox.x + (wrapperBox.width / 2);
+                    const clickY = wrapperBox.y + (wrapperBox.height / 2);
+                    trace(`${label}: พบ legacy Turnstile wrapper x=${Math.round(wrapperBox.x)}, y=${Math.round(wrapperBox.y)}, ` +
+                        `w=${Math.round(wrapperBox.width)}, h=${Math.round(wrapperBox.height)}; click=${Math.round(clickX)},${Math.round(clickY)}`);
+                    await page.mouse.click(clickX, clickY);
+                    lastClickAt = Date.now();
+                    clicked = true;
+                } else if (!manualMode) {
+                    const iframe = await page.$('iframe[src*="challenges.cloudflare.com"]');
+                    const iframeBox = iframe ? await iframe.boundingBox().catch(() => null) : null;
+                    if (iframeBox && iframeBox.width > 250 && iframeBox.height > 40 && Date.now() - lastClickAt > 3000) {
+                        await sleepMs(800);
+                        trace(`${label}: พบ Cloudflare iframe ที่มองเห็นได้ x=${Math.round(iframeBox.x)}, y=${Math.round(iframeBox.y)}, ` +
+                            `w=${Math.round(iframeBox.width)}, h=${Math.round(iframeBox.height)}; กำลังคลิก`);
+                        await page.mouse.click(iframeBox.x + 42, iframeBox.y + 45);
+                        lastClickAt = Date.now();
+                        clicked = true;
+                    }
+                }
+
+                if (clicked && await waitForTurnstileToken(2000, label, { timeoutLog: false })) return true;
+                if (clicked && !manualPrompted) {
+                    manualMode = true;
+                    manualPrompted = true;
+                    await page.bringToFront().catch(() => {});
+                    trace(`${label}: การคลิกอัตโนมัติยังไม่ทำให้เกิด token; กรุณาคลิก checkbox Cloudflare ในหน้าต่าง Browser ด้วยตนเอง แล้วรอให้ขึ้น Success`);
+                }
+                if (Date.now() >= nextProgressAt) {
+                    const state = await page.evaluate(() => ({
+                        tokenPresent: Array.from(document.querySelectorAll('input[name="cf-turnstile-response"]'))
+                            .some(input => Boolean(input.value)),
+                        inputCount: document.querySelectorAll('input[name="cf-turnstile-response"]').length,
+                        widgetCount: document.querySelectorAll('.cf-turnstile').length,
+                        iframeCount: document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]').length
+                    })).catch(() => ({ tokenPresent: false, inputCount: 0, iframeCount: 0 }));
+                    trace(`${label}: progress elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s; ` +
+                        `token=${state.tokenPresent}; inputs=${state.inputCount}; widgets=${state.widgetCount}; ` +
+                        `iframes=${state.iframeCount}; clicked=${clicked}; url=${page.url()}`);
+                    nextProgressAt = Date.now() + 5000;
+                }
+            }
+            trace(`${label}: หมดเวลา ${(timeoutMs / 1000).toFixed(0)}s โดยยังไม่ได้ token; url=${page.url()}; title=${JSON.stringify(await page.title().catch(() => ''))}`);
             return false;
         }
 
@@ -672,22 +893,35 @@ async function loginWithBrowserForAccessToken(username, password, options = {}) 
             }).catch(() => '');
         }
 
-        await page.goto(`${PASSPORT_BASE_URL}/hall-of-fame-web/login`, {
-            waitUntil: 'domcontentloaded'
-        });
+        await navigateAndTrace(`${PASSPORT_BASE_URL}/hall-of-fame-web/login`, 'หน้า login ครั้งแรก');
+        const firstPageState = await inspectPage('หลังเปิดหน้า login ครั้งแรก');
 
-        if ((await page.content()).includes('challenge-platform')) {
+        if (firstPageState.challengePlatform) {
             log(`[BROWSER-AUTH] พบ Cloudflare challenge กำลังดำเนินการอัตโนมัติ...`);
-            const solved = await clickTurnstileIfVisible();
+            trace(`พบ challenge-platform; headless=${headless}; browserUrl=${page.url()}`);
+            if (headless) {
+                trace('หยุดทันที: Cloudflare challenge เป็น interactive แต่ Browser ถูกเปิดแบบ headless จึงไม่มีทางให้ผู้ใช้กด/ยืนยัน challenge ได้');
+                throw new Error('พบ Cloudflare challenge ใน headless mode; ตั้ง BROWSER_TOKEN_LOGIN_HEADLESS=false แล้วลองใหม่');
+            }
+            const solved = await clickTurnstileIfVisible(120000, 'Cloudflare challenge ก่อนหน้า login');
             if (!solved) throw new Error('ไม่สามารถผ่าน Cloudflare challenge ได้');
-            for (let i = 0; i < 60 && (await page.content()).includes('challenge-platform'); i++) {
+            trace('ได้รับ Turnstile token แล้ว กำลังรอ Cloudflare เปลี่ยนหน้า');
+            const challengeWaitStartedAt = Date.now();
+            let challengeCleared = false;
+            for (let i = 0; i < 60; i++) {
+                const state = await inspectPage(`รอ challenge เปลี่ยนหน้า ${(i + 1)}s`);
+                if (!state.challengePlatform) {
+                    challengeCleared = true;
+                    break;
+                }
                 await sleepMs(1000);
             }
+            trace(`ผลการรอ Cloudflare: cleared=${challengeCleared}; elapsed=${((Date.now() - challengeWaitStartedAt) / 1000).toFixed(1)}s`);
+            if (!challengeCleared) throw new Error('Cloudflare challenge ยังไม่หายหลังรอ 60 วินาที');
         }
 
-        await page.goto(`${PASSPORT_BASE_URL}/hall-of-fame-web/login`, {
-            waitUntil: 'domcontentloaded'
-        });
+        await navigateAndTrace(`${PASSPORT_BASE_URL}/hall-of-fame-web/login`, 'เปิดหน้า login หลัง Cloudflare');
+        await inspectPage('ก่อนค้นหา input login');
         const usernameInput = await page.waitForSelector(
             'input[name="username"], input[type="email"]',
             { visible: true, timeout: 60000 }
@@ -696,20 +930,90 @@ async function loginWithBrowserForAccessToken(username, password, options = {}) 
             'input[name="password"], input[type="password"]',
             { visible: true, timeout: 60000 }
         );
+        trace('พบ username/password input แล้ว กำลังกรอกข้อมูล');
         await usernameInput.type(username);
         await passwordInput.type(password);
 
-        const loginCaptchaSolved = await waitForTurnstileToken(5000) ||
-            await clickTurnstileIfVisible(120000);
-        if (!loginCaptchaSolved) throw new Error('ไม่พบ access_token หลังผ่าน Turnstile หน้า login');
+        // Do not click the Turnstile widget on the login form.  The site's
+        // normal login action is the source of truth here: submit the form
+        // after filling the credentials and let the server/browser flow
+        // handle any challenge state itself.
+        const loginCaptchaState = await page.evaluate(() => ({
+            tokenPresent: Array.from(document.querySelectorAll('input[name="cf-turnstile-response"]'))
+                .some(input => Boolean(input.value)),
+            widgets: document.querySelectorAll('.cf-turnstile').length,
+            iframes: document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]').length
+        })).catch(() => ({ tokenPresent: false, widgets: 0, iframes: 0 }));
+        trace(`ไม่คลิก Turnstile หน้า login; token=${loginCaptchaState.tokenPresent}; ` +
+            `widgets=${loginCaptchaState.widgets}; iframes=${loginCaptchaState.iframes}; กำลังกดปุ่มเข้าสู่ระบบ`);
 
         const submit = await page.$('button[type="submit"], input[type="submit"]');
         if (!submit) throw new Error('ไม่พบปุ่ม submit หน้า login');
-        await Promise.allSettled([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 }),
-            submit.click()
-        ]);
+        const submitInfo = await page.evaluate(() => {
+            const button = document.querySelector('button[type="submit"], input[type="submit"]');
+            const rect = button?.getBoundingClientRect();
+            return {
+                tag: button?.tagName || '',
+                text: (button?.innerText || button?.value || '').trim(),
+                disabled: Boolean(button?.disabled),
+                visible: Boolean(button && rect && rect.width > 0 && rect.height > 0),
+                x: rect ? Math.round(rect.x) : null,
+                y: rect ? Math.round(rect.y) : null,
+                width: rect ? Math.round(rect.width) : null,
+                height: rect ? Math.round(rect.height) : null
+            };
+        }).catch(() => ({}));
+        trace(`พบปุ่ม submit แล้ว; ${JSON.stringify(submitInfo)}; url=${page.url()}`);
+
+        async function waitForLoginNavigation(label, timeoutMs) {
+            let timedOut = false;
+            const timeout = sleepMs(timeoutMs).then(() => {
+                timedOut = true;
+                return false;
+            });
+            const navigation = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: timeoutMs })
+                .then(() => true)
+                .catch(error => {
+                    trace(`${label}: navigation error/timeout: ${error.message}`);
+                    return false;
+                });
+            const navigated = await Promise.race([navigation, timeout]);
+            if (timedOut && page.url().includes('/login')) {
+                trace(`${label}: ยังอยู่หน้า login หลัง ${(timeoutMs / 1000).toFixed(0)}s`);
+            }
+            return navigated || !page.url().includes('/login');
+        }
+
+        trace(`กำลัง click ปุ่ม submit ผ่าน Browser API; url=${page.url()}`);
+        try {
+            await submit.click();
+            trace('Browser API click ส่งสำเร็จ');
+        } catch (clickError) {
+            trace(`Browser API click ล้มเหลว: ${clickError.message}`);
+        }
+
+        let navigated = await waitForLoginNavigation('หลัง Browser API click', 15000);
+        if (!navigated && page.url().includes('/login')) {
+            trace('ไม่พบ navigation หลัง click; ใช้ form.requestSubmit() เป็น fallback');
+            await page.evaluate(() => {
+                const form = document.querySelector('form');
+                const button = form?.querySelector('button[type="submit"], input[type="submit"]');
+                if (!form) throw new Error('ไม่พบ form หน้า login');
+                if (typeof form.requestSubmit === 'function') form.requestSubmit(button);
+                else if (button) button.click();
+                else form.submit();
+            });
+            navigated = await waitForLoginNavigation('หลัง form.requestSubmit fallback', 15000);
+        }
+        if (!navigated && page.url().includes('/login')) {
+            trace('ยังไม่เปลี่ยนหน้า; ใช้ keyboard Enter หลัง focus password เป็น fallback สุดท้าย');
+            await page.focus('input[name="password"], input[type="password"]').catch(() => {});
+            await page.keyboard.press('Enter');
+            navigated = await waitForLoginNavigation('หลัง keyboard Enter fallback', 15000);
+        }
+        trace(`ผลการ submit login: navigated=${navigated}; finalUrl=${page.url()}`);
         await sleepMs(2500);
+        await inspectPage('หลัง submit login');
 
         if (page.url().includes('/login')) {
             throw new Error('ล็อกอินผ่าน Browser ไม่สำเร็จ');
@@ -727,6 +1031,19 @@ async function loginWithBrowserForAccessToken(username, password, options = {}) 
         return true;
     } catch (e) {
         log(`[BROWSER-AUTH] login เพื่อดึง access_token ล้มเหลว: ${e.message}`);
+        if (trace) {
+            trace(`FAIL: ${e.stack || e.message}`);
+            if (browser) {
+                try {
+                    const currentPage = (await browser.pages())[0];
+                    if (currentPage) {
+                        trace(`สถานะสุดท้าย: url=${currentPage.url()}; title=${JSON.stringify(await currentPage.title().catch(() => ''))}`);
+                    }
+                } catch (diagnosticError) {
+                    trace(`อ่านสถานะสุดท้ายไม่สำเร็จ: ${diagnosticError.message}`);
+                }
+            }
+        }
         return false;
     } finally {
         if (browser) {

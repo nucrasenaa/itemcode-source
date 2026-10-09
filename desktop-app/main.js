@@ -1703,7 +1703,9 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
         browser_redeem_enabled: itemcodeAccounts.length > 0,
         browser_redeem_headless: true,
         browser_token_login_enabled: true,
-        browser_token_login_headless: true,
+        browser_token_login_headless: process.env.BROWSER_TOKEN_LOGIN_HEADLESS === 'false'
+            ? false
+            : config.browser_token_login_headless !== false,
         browser_redeem_max_attempts: normalizeRedeemAttempts(settings?.browserRedeemMaxAttempts),
         youtube_chat_enabled: Boolean(settings?.youtubeChatEnabled)
     });
@@ -1740,7 +1742,7 @@ async function startService(settings, serviceArgs = [], mode = 'running') {
         cwd: runtime,
         env: toolEnvironment({
             PLAYWRIGHT_BROWSERS_PATH: preferredBrowserPath(),
-            BROWSER_TOKEN_LOGIN_HEADLESS: 'true',
+            BROWSER_TOKEN_LOGIN_HEADLESS: config.browser_token_login_headless === false ? 'false' : 'true',
             BROWSER_REDEEM_HEADLESS: 'true',
             NODE_PATH: [serviceNodePath, inheritedNodePath].filter(Boolean).join(path.delimiter)
         }),
