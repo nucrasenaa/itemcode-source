@@ -24,6 +24,11 @@
 - ผู้ใช้ License จำกัดบัญชีรับ ItemCode 1 บัญชี และซ่อน Telegram/Discord Notification
 - เพิ่ม session Discord อายุ 30 วัน, heartbeat และหน้า License Manager สำหรับดู active users
 
+## [0.3.1] - 2026-10-09 (Windows)
+
+- ซ่อนหน้าต่าง Chromium สำหรับ Discord login ใน release ของ Windows
+- บังคับโหมด headless ใน packaged app แม้มีค่าตั้งค่าเก่าจากรุ่นก่อน
+
 ## [0.2.14] - 2026-10-09 (macOS / Windows)
 
 - เปลี่ยนจุดตรวจสอบ Update ไปยัง nucrasenaa/itemcode-releases
