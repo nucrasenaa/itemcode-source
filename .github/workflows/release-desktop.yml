@@ -19,9 +19,12 @@ jobs:
       - name: Select release platforms
         id: platforms
         run: |
-          if git log -1 --format=%B | grep -Fq '[release-macos]'; then
+          # Resolve the tagged commit explicitly.  An annotated tag makes
+          # `git log -1` point at the tag message instead of the commit
+          # message, which could accidentally publish both platforms.
+          if git log -1 --format=%B "$GITHUB_SHA" | grep -Fq '[release-macos]'; then
             echo 'platforms=["macos-latest"]' >> "$GITHUB_OUTPUT"
-          elif git log -1 --format=%B | grep -Fq '[release-windows]'; then
+          elif git log -1 --format=%B "$GITHUB_SHA" | grep -Fq '[release-windows]'; then
             echo 'platforms=["windows-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'platforms=["macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
