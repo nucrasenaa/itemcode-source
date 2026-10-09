@@ -1,6 +1,6 @@
 {
   "name": "itemcode-desktop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Cross-platform desktop UI for equality-itemcode-version",
   "main": "main.js",
   "type": "commonjs",

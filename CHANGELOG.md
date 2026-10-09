@@ -24,6 +24,12 @@
 - ผู้ใช้ License จำกัดบัญชีรับ ItemCode 1 บัญชี และซ่อน Telegram/Discord Notification
 - เพิ่ม session Discord อายุ 30 วัน, heartbeat และหน้า License Manager สำหรับดู active users
 
+## [0.3.2] - 2026-10-09 (Windows)
+
+- ปรับการส่ง Telegram หลังเติม ItemCode ให้ใช้ HTTPS request โดยตรง
+- เพิ่ม timeout 15 วินาทีและ retry อัตโนมัติเมื่อเกิด network error หรือ Telegram ตอบกลับแบบชั่วคราว
+- แสดงรายละเอียดสาเหตุเมื่อส่ง Telegram ไม่สำเร็จ และไม่รายงานว่าส่งสำเร็จลวง
+
 ## [0.3.1] - 2026-10-09 (Windows)
 
 - ซ่อนหน้าต่าง Chromium สำหรับ Discord login ใน release ของ Windows
