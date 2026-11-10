@@ -100,7 +100,8 @@ jobs:
         working-directory: desktop-app
         env:
           RELEASE_REPO: ${{ github.repository }}
-        run: node -e "const fs=require('fs');const p='package.json';const x=JSON.parse(fs.readFileSync(p,'utf8'));if(x.build&&x.build.publish)x.build.publish.repo=process.env.RELEASE_REPO.split('/')[1];fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n')
+        run: >-
+          node -e 'const fs=require("fs");const f="package.json";const x=JSON.parse(fs.readFileSync(f,"utf8"));if(x.build&&x.build.publish)x.build.publish.repo=process.env.RELEASE_REPO.split("/")[1];fs.writeFileSync(f,JSON.stringify(x,null,2)+"\n");'
 
       - name: Test service and desktop
         run: |
