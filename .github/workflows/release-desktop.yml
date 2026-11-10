@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Git ref to build (branch or tag)'
+        required: true
+        default: main
+        type: string
+      release_tag:
+        description: 'Release tag to create or update'
+        required: true
+        default: v0.3.3
+        type: string
 
 permissions:
   contents: write
@@ -16,13 +28,14 @@ jobs:
       platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - name: Select release platforms
         id: platforms
         run: |
-          # Resolve the tagged commit explicitly.  An annotated tag makes
-          # `git log -1` point at the tag message instead of the commit
-          # message, which could accidentally publish both platforms.
-          if git log -1 --format=%B "$GITHUB_SHA" | grep -Fq '[release-macos]'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo 'platforms=["macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          elif git log -1 --format=%B | grep -Fq '[release-macos]'; then
             echo 'platforms=["macos-latest"]' >> "$GITHUB_OUTPUT"
           elif git log -1 --format=%B "$GITHUB_SHA" | grep -Fq '[release-windows]'; then
             echo 'platforms=["windows-latest"]' >> "$GITHUB_OUTPUT"
@@ -33,14 +46,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: nucrasenaa/itemcode-source
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists"
+          if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists"
           else
-            gh release create "$GITHUB_REF_NAME" \
+            gh release create "$RELEASE_TAG" \
               --repo "$RELEASE_REPO" \
-              --target "$GITHUB_SHA" \
-              --title "Equality ItemCode Watcher $GITHUB_REF_NAME" \
+              --target "$SOURCE_REF" \
+              --title "Equality ItemCode Watcher $RELEASE_TAG" \
               --generate-notes
           fi
 
@@ -60,6 +75,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,6 +95,12 @@ jobs:
         working-directory: desktop-app
         run: npm ci
 
+      - name: Configure release target
+        working-directory: desktop-app
+        env:
+          RELEASE_REPO: ${{ github.repository }}
+        run: node -e "const fs=require('fs');const p='package.json';const x=JSON.parse(fs.readFileSync(p,'utf8'));if(x.build&&x.build.publish)x.build.publish.repo=process.env.RELEASE_REPO.split('/')[1];fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n')
+
       - name: Test service and desktop
         run: |
           npm --prefix equality-itemcode-version test
@@ -90,7 +113,8 @@ jobs:
 
       - name: Build and publish
         working-directory: desktop-app
-        run: npm run dist:release -- --publish always
+        run: >-
+          node -e "const cp=require('child_process'),fs=require('fs');const s=JSON.parse(fs.readFileSync('package.json','utf8')).scripts;const script=s['dist:release']?'dist:release':'dist';const npm=process.platform==='win32'?'npm.cmd':'npm';const r=cp.spawnSync(npm,['run',script,'--','--publish','always'],{stdio:'inherit'});process.exit(r.status===null?1:r.status)"
         env:
           # Publish releases to this source repository using the workflow token.
           GH_TOKEN: ${{ github.token }}
