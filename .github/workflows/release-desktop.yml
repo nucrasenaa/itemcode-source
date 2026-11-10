@@ -49,12 +49,13 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
         run: |
+          TARGET_COMMIT="$(git rev-list -n 1 "$SOURCE_REF")"
           if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists"
           else
             gh release create "$RELEASE_TAG" \
               --repo "$RELEASE_REPO" \
-              --target "$SOURCE_REF" \
+              --target "$TARGET_COMMIT" \
               --title "Equality ItemCode Watcher $RELEASE_TAG" \
               --generate-notes
           fi
