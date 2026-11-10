@@ -31,15 +31,15 @@ jobs:
           fi
       - name: Create release before platform publishers start
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-          RELEASE_REPO: nucrasenaa/itemcode-releases
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPO: nucrasenaa/itemcode-source
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists"
           else
             gh release create "$GITHUB_REF_NAME" \
               --repo "$RELEASE_REPO" \
-              --target main \
+              --target "$GITHUB_SHA" \
               --title "Equality ItemCode Watcher $GITHUB_REF_NAME" \
               --generate-notes
           fi
@@ -92,6 +92,5 @@ jobs:
         working-directory: desktop-app
         run: npm run dist:release -- --publish always
         env:
-          # The release-only repository is separate from the private source repo.
-          # Add a PAT with access to nucrasenaa/itemcode-releases as RELEASE_REPO_TOKEN.
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          # Publish releases to this source repository using the workflow token.
+          GH_TOKEN: ${{ github.token }}

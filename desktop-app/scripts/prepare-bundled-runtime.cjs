@@ -9,6 +9,7 @@ const SERVICE_ROOT = path.resolve(DESKTOP_ROOT, '..', 'equality-itemcode-version
 const BUNDLED_ROOT = path.join(DESKTOP_ROOT, 'bundled');
 const TOOLS_ROOT = path.join(BUNDLED_ROOT, 'tools');
 const BROWSERS_ROOT = path.join(BUNDLED_ROOT, 'playwright-browsers');
+const MAC_NODE_VERSION = process.env.BUNDLED_NODE_VERSION || 'v22.23.3';
 
 function commandPaths(command) {
     const resolver = process.platform === 'win32' ? 'where.exe' : 'which';
@@ -92,6 +93,162 @@ function verifyExecutable(file, args) {
     }
 }
 
+function canonicalPath(file) {
+    try {
+        return fs.realpathSync(file);
+    } catch {
+        return path.resolve(file);
+    }
+}
+
+function machoDependencies(file) {
+    const result = spawnSync('otool', ['-L', file], { encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) {
+        throw new Error(`อ่าน Mach-O dependencies ไม่ได้: ${file}\n${result.stderr || result.error || ''}`);
+    }
+    return String(result.stdout || '')
+        .split(/\r?\n/)
+        .slice(1)
+        .map(line => line.trim().split(/\s+/)[0])
+        .filter(Boolean);
+}
+
+function machoRpaths(file) {
+    const result = spawnSync('otool', ['-l', file], { encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) return [];
+    const lines = String(result.stdout || '').split(/\r?\n/);
+    const rpaths = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        if (lines[index].trim() !== 'cmd LC_RPATH') continue;
+        const pathLine = lines[index + 2] || '';
+        const match = pathLine.trim().match(/^path (.+?) \(offset/);
+        if (match) rpaths.push(match[1]);
+    }
+    return rpaths;
+}
+
+function isSystemMachoDependency(dependency) {
+    return dependency.startsWith('/System/Library/')
+        || dependency.startsWith('/System/Applications/')
+        || dependency.startsWith('/usr/lib/')
+        || dependency.startsWith('/usr/libexec/');
+}
+
+function resolveMachoDependency(dependency, owner, executable) {
+    const ownerDirectory = path.dirname(owner);
+    const executableDirectory = path.dirname(executable);
+    const candidates = [];
+
+    if (dependency.startsWith('@loader_path/')) {
+        candidates.push(path.resolve(ownerDirectory, dependency.slice('@loader_path/'.length)));
+    } else if (dependency.startsWith('@executable_path/')) {
+        candidates.push(path.resolve(executableDirectory, dependency.slice('@executable_path/'.length)));
+    } else if (dependency.startsWith('@rpath/')) {
+        const suffix = dependency.slice('@rpath/'.length);
+        for (const rpath of machoRpaths(owner)) {
+            const expanded = rpath
+                .replace('@loader_path', ownerDirectory)
+                .replace('@executable_path', executableDirectory);
+            candidates.push(path.resolve(expanded, suffix));
+        }
+        // Homebrew Mach-O files occasionally use @rpath without retaining a
+        // usable LC_RPATH after a package upgrade. These are the standard
+        // arm64/x64 Homebrew library locations on the build machine.
+        candidates.push(
+            path.join('/opt/homebrew/lib', suffix),
+            path.join('/usr/local/lib', suffix),
+            path.join('/opt/local/lib', suffix)
+        );
+    } else if (path.isAbsolute(dependency)) {
+        candidates.push(dependency);
+    }
+
+    return candidates.find(candidate => fs.existsSync(candidate)) || '';
+}
+
+function patchAndBundleMachoDependencies(source, executableDestination, libDestination) {
+    if (process.platform !== 'darwin') return;
+
+    const records = new Map();
+    const visited = new Set();
+
+    function collect(file, isExecutable = false) {
+        const sourcePath = canonicalPath(file);
+        if (visited.has(sourcePath) || isSystemMachoDependency(sourcePath)) return;
+        visited.add(sourcePath);
+
+        const destination = isExecutable
+            ? executableDestination
+            : path.join(libDestination, path.basename(sourcePath));
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        if (!fs.existsSync(destination)) fs.copyFileSync(sourcePath, destination);
+        records.set(sourcePath, { source: sourcePath, destination, isExecutable });
+
+        for (const dependency of machoDependencies(sourcePath)) {
+            if (isSystemMachoDependency(dependency)) continue;
+            const resolved = resolveMachoDependency(dependency, sourcePath, source);
+            if (!resolved) {
+                throw new Error(`ไม่พบ Mach-O dependency ของ ${sourcePath}: ${dependency}`);
+            }
+            collect(resolved);
+        }
+    }
+
+    collect(source, true);
+
+    for (const record of records.values()) {
+        const originalDependencies = machoDependencies(record.source);
+        for (const dependency of originalDependencies) {
+            if (isSystemMachoDependency(dependency)) continue;
+            const resolved = resolveMachoDependency(dependency, record.source, source);
+            const dependencyRecord = records.get(canonicalPath(resolved));
+            if (!dependencyRecord) {
+                throw new Error(`ไม่พบ dependency ที่ bundle ไว้: ${dependency} จาก ${record.source}`);
+            }
+            const replacement = record.isExecutable
+                ? `@loader_path/lib/${path.basename(dependencyRecord.destination)}`
+                : `@loader_path/${path.basename(dependencyRecord.destination)}`;
+            run('install_name_tool', ['-change', dependency, replacement, record.destination]);
+        }
+        if (!record.isExecutable) {
+            run('install_name_tool', [
+                '-id',
+                `@loader_path/${path.basename(record.destination)}`,
+                record.destination
+            ]);
+        }
+    }
+
+    // Sign after install_name_tool has rewritten the load commands. Electron
+    // Builder may sign the enclosing app later; this ad-hoc signature makes
+    // the staged executable immediately runnable during the preflight.
+    for (const record of [...records.values()].reverse()) {
+        run('codesign', ['--force', '--sign', '-', record.destination]);
+    }
+}
+
+async function prepareMacNode(destination) {
+    if (process.platform !== 'darwin') {
+        copyExecutable(process.env.NODE_RUNTIME_PATH || process.execPath, destination);
+        return;
+    }
+
+    const arch = process.arch === 'arm64' || process.arch === 'x64' ? process.arch : '';
+    if (!arch) throw new Error(`ไม่รองรับ macOS architecture สำหรับ Node runtime: ${process.arch}`);
+
+    const workRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'itemcode-node-'));
+    try {
+        const archive = path.join(workRoot, 'node.tar.gz');
+        const directory = `node-${MAC_NODE_VERSION}-darwin-${arch}`;
+        const url = `https://nodejs.org/dist/${MAC_NODE_VERSION}/${directory}.tar.gz`;
+        await download(url, archive);
+        run('tar', ['-xzf', archive, '-C', workRoot]);
+        copyExecutable(path.join(workRoot, directory, 'bin', 'node'), destination);
+    } finally {
+        fs.rmSync(workRoot, { recursive: true, force: true });
+    }
+}
+
 function installFfmpegIfMissing() {
     const command = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
     let candidates = [process.env.FFMPEG_PATH, ...commandPaths(command)];
@@ -127,11 +284,19 @@ async function main() {
     fs.mkdirSync(BROWSERS_ROOT, { recursive: true });
 
     const nodeDestination = path.join(TOOLS_ROOT, 'node', process.platform === 'win32' ? 'node.exe' : 'node');
-    copyExecutable(process.env.NODE_RUNTIME_PATH || process.execPath, nodeDestination);
+    await prepareMacNode(nodeDestination);
     verifyExecutable(nodeDestination, ['--version']);
 
     const ffmpegDestination = path.join(TOOLS_ROOT, 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-    copyExecutable(installFfmpegIfMissing(), ffmpegDestination);
+    const ffmpegSource = installFfmpegIfMissing();
+    copyExecutable(ffmpegSource, ffmpegDestination);
+    if (process.platform === 'darwin') {
+        patchAndBundleMachoDependencies(
+            ffmpegSource,
+            ffmpegDestination,
+            path.join(TOOLS_ROOT, 'ffmpeg', 'lib')
+        );
+    }
     verifyExecutable(ffmpegDestination, ['-version']);
 
     const ytdlpDestination = path.join(TOOLS_ROOT, 'ytdlp', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
@@ -150,11 +315,15 @@ async function main() {
             PLAYWRIGHT_BROWSERS_PATH: BROWSERS_ROOT
         }
     });
-    // The current Playwright CLI also downloads ffmpeg/headless-shell helpers.
-    // The service launches the Chromium browser only, so omit those optional
-    // downloads from the installer to keep the release size reasonable.
+    // The current Playwright CLI downloads Chromium, its headless shell, and
+    // an optional ffmpeg helper. The service's default headless launch uses
+    // the headless shell, so both Chromium directories must remain in the
+    // offline installer. Only Playwright's separate ffmpeg helper is removed;
+    // the application bundles its own FFmpeg above.
     for (const entry of fs.readdirSync(BROWSERS_ROOT, { withFileTypes: true })) {
-        if (entry.isDirectory() && !entry.name.toLowerCase().startsWith('chromium-')) {
+        if (entry.isDirectory()
+            && !entry.name.toLowerCase().startsWith('chromium-')
+            && !entry.name.toLowerCase().startsWith('chromium_headless_shell-')) {
             fs.rmSync(path.join(BROWSERS_ROOT, entry.name), { recursive: true, force: true });
         }
     }
