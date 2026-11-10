@@ -113,10 +113,18 @@ jobs:
         working-directory: equality-itemcode-version
         run: npm run build:ocr:mac
 
-      - name: Build and publish
+      - name: Build and publish protected release
+        if: hashFiles('desktop-app/scripts/release-build.cjs') != ''
         working-directory: desktop-app
-        run: >-
-          node -e "const cp=require('child_process'),fs=require('fs');const s=JSON.parse(fs.readFileSync('package.json','utf8')).scripts;const script=s['dist:release']?'dist:release':'dist';const npm=process.platform==='win32'?'npm.cmd':'npm';const r=cp.spawnSync(npm,['run',script,'--','--publish','always'],{stdio:'inherit'});process.exit(r.status===null?1:r.status)"
+        run: npm run dist:release -- --publish always
+        env:
+          # Publish releases to this source repository using the workflow token.
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build and publish legacy release
+        if: hashFiles('desktop-app/scripts/release-build.cjs') == ''
+        working-directory: desktop-app
+        run: npm run dist -- --publish always
         env:
           # Publish releases to this source repository using the workflow token.
           GH_TOKEN: ${{ github.token }}
